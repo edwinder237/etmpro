@@ -1,7 +1,7 @@
-import { NextRequest, NextResponse } from "next/server";
+import { type NextRequest, NextResponse } from "next/server";
 import { tasksCollection } from "~/server/db";
-import type { Task } from "~/server/db/schema";
-import { ObjectId } from "mongodb";
+import type { Task, TaskQuadrant, TaskPriority, TaskStatus } from "~/server/db/schema";
+import { ObjectId, type Filter } from "mongodb";
 import { auth } from "@clerk/nextjs/server";
 
 export async function GET(request: NextRequest) {
@@ -18,7 +18,7 @@ export async function GET(request: NextRequest) {
     const priority = searchParams.get("priority");
     const status = searchParams.get("status");
 
-    const filter: any = { userId };
+    const filter: Filter<Task> = { userId };
     
     if (search) {
       filter.$or = [
@@ -27,9 +27,9 @@ export async function GET(request: NextRequest) {
       ];
     }
     
-    if (quadrant) filter.quadrant = quadrant;
-    if (priority) filter.priority = priority;
-    if (status) filter.status = status;
+    if (quadrant) filter.quadrant = quadrant as TaskQuadrant;
+    if (priority) filter.priority = priority as TaskPriority;
+    if (status) filter.status = status as TaskStatus;
 
     const tasks = await tasksCollection.find(filter).sort({ createdAt: -1 }).toArray();
     
@@ -48,14 +48,21 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = await request.json() as {
+      title: string;
+      description?: string;
+      quadrant: TaskQuadrant;
+      priority: TaskPriority;
+      status?: TaskStatus;
+      dueDate?: string;
+    };
     
     const newTask: Task = {
       title: body.title,
       description: body.description,
       quadrant: body.quadrant,
       priority: body.priority,
-      status: body.status || "pending",
+      status: body.status ?? "pending",
       dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
       createdAt: new Date(),
       updatedAt: new Date(),
@@ -80,7 +87,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
 
-    const body = await request.json();
+    const body = await request.json() as { _id: string; [key: string]: unknown };
     const { _id, ...updateData } = body;
     
     if (!_id) {

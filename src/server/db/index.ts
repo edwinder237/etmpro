@@ -1,4 +1,4 @@
-import { MongoClient, Db } from "mongodb";
+import { MongoClient, type Db } from "mongodb";
 import { env } from "~/env";
 import type { Task } from "./schema";
 import { collections } from "./schema";
@@ -15,14 +15,10 @@ if (env.NODE_ENV === "production") {
   client = new MongoClient(env.DATABASE_URL);
   db = client.db();
 } else {
-  if (!globalForDb.client) {
-    globalForDb.client = new MongoClient(env.DATABASE_URL);
-  }
+  globalForDb.client ??= new MongoClient(env.DATABASE_URL);
   client = globalForDb.client;
   
-  if (!globalForDb.db) {
-    globalForDb.db = client.db();
-  }
+  globalForDb.db ??= client.db();
   db = globalForDb.db;
 }
 

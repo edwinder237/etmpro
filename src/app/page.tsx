@@ -11,9 +11,7 @@ import {
   Trash2, 
   Calendar,
   CheckCircle2,
-  Clock,
   AlertCircle,
-  ListTodo,
   X,
   Eye,
   EyeOff
@@ -21,7 +19,7 @@ import {
 import { format } from "date-fns";
 import { cn } from "~/lib/utils";
 import toast, { Toaster } from "react-hot-toast";
-import { UserButton, useUser } from "@clerk/nextjs";
+import { UserButton } from "@clerk/nextjs";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { TaskIcon } from "~/components/icons/TaskIcon";
 
@@ -73,12 +71,10 @@ const quadrantConfig = {
 };
 
 export default function HomePage() {
-  const { user } = useUser();
   const [tasks, setTasks] = useState<Task[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [selectedQuadrant, setSelectedQuadrant] = useState<TaskQuadrant | null>(null);
   const [darkMode, setDarkMode] = useState(true);
   const [hideCompleted, setHideCompleted] = useState<Record<TaskQuadrant, boolean>>({
     "urgent-important": true,
@@ -101,14 +97,14 @@ export default function HomePage() {
   });
 
   useEffect(() => {
-    fetchTasks();
+    void fetchTasks();
   }, []);
 
   const fetchTasks = async () => {
     try {
       const response = await fetch("/api/tasks");
       if (response.ok) {
-        const data = await response.json();
+        const data = await response.json() as Task[];
         setTasks(data);
       } else {
         toast.error("Failed to fetch tasks");
@@ -249,7 +245,6 @@ export default function HomePage() {
       dueDate: ""
     });
     setEditingTask(null);
-    setSelectedQuadrant(null);
   };
 
   const closeModal = () => {
@@ -258,7 +253,6 @@ export default function HomePage() {
   };
 
   const openModalForQuadrant = (quadrant: TaskQuadrant) => {
-    setSelectedQuadrant(quadrant);
     setEditingTask(null);
     setFormData({
       title: "",
@@ -272,13 +266,12 @@ export default function HomePage() {
 
   const openTaskForEdit = (task: Task) => {
     setEditingTask(task);
-    setSelectedQuadrant(null);
     setFormData({
       title: task.title,
-      description: task.description || "",
+      description: task.description ?? "",
       quadrant: task.quadrant,
       priority: task.priority,
-      dueDate: (task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0] : "") as string
+      dueDate: task.dueDate ? new Date(task.dueDate).toISOString().split('T')[0]! : ""
     });
     setIsModalOpen(true);
   };
