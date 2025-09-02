@@ -1,0 +1,24 @@
+<svg width="32" height="32" viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+  <!-- Blue background -->
+  <rect width="32" height="32" rx="7" fill="#2563eb"/>
+  
+  <!-- First checkbox - checked -->
+  <rect x="6" y="8" width="4" height="4" rx="1" fill="white"/>
+  <!-- Checkmark -->
+  <path d="M6.8 9.6L7.8 10.6L9.6 8.8" stroke="#2563eb" stroke-width="1.2" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  
+  <!-- First line -->
+  <line x1="12" y1="10" x2="26" y2="10" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  
+  <!-- Second checkbox - unchecked -->
+  <rect x="6" y="14" width="4" height="4" rx="1" stroke="white" stroke-width="1.5" fill="none"/>
+  
+  <!-- Second line -->
+  <line x1="12" y1="16" x2="24" y2="16" stroke="white" stroke-width="2" stroke-linecap="round"/>
+  
+  <!-- Third checkbox - unchecked -->
+  <rect x="6" y="20" width="4" height="4" rx="1" stroke="white" stroke-width="1.5" fill="none"/>
+  
+  <!-- Third line - shorter -->
+  <line x1="12" y1="22" x2="20" y2="22" stroke="white" stroke-width="2" stroke-linecap="round"/>
+</svg>
