@@ -95,6 +95,12 @@ export default function HomePage() {
     priority: "medium",
     dueDate: ""
   });
+  const [quickTaskInputs, setQuickTaskInputs] = useState<Record<TaskQuadrant, string>>({
+    "urgent-important": "",
+    "important-not-urgent": "",
+    "urgent-not-important": "",
+    "not-urgent-not-important": ""
+  });
 
   useEffect(() => {
     void fetchTasks();
@@ -132,6 +138,34 @@ export default function HomePage() {
       }
     } catch (error) {
       console.error("Error adding task:", error);
+      toast.error("Error adding task");
+    }
+  };
+
+  const handleQuickAddTask = async (quadrant: TaskQuadrant, title: string) => {
+    if (!title.trim()) return;
+    
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: title.trim(),
+          quadrant,
+          priority: "medium",
+          status: "pending"
+        })
+      });
+      
+      if (response.ok) {
+        await fetchTasks();
+        setQuickTaskInputs(prev => ({ ...prev, [quadrant]: "" }));
+        toast.success("Task added!");
+      } else {
+        toast.error("Failed to add task");
+      }
+    } catch (error) {
+      console.error("Error adding quick task:", error);
       toast.error("Error adding task");
     }
   };
@@ -451,16 +485,6 @@ export default function HomePage() {
                         <Eye className="w-3 h-3 md:w-4 md:h-4" />
                       )}
                     </button>
-                    <button
-                      onClick={() => openModalForQuadrant(quadrant)}
-                      className={cn(
-                        "p-1.5 md:p-2 rounded-lg text-white transition-colors",
-                        config.color,
-                        "hover:opacity-90"
-                      )}
-                    >
-                      <Plus className="w-4 h-4 md:w-5 md:h-5" />
-                    </button>
                   </div>
                 </div>
 
@@ -622,6 +646,33 @@ export default function HomePage() {
                       </div>
                     ))
                   )}
+                </div>
+
+                {/* Quick Add Task Input */}
+                <div className="mt-3">
+                  <div className="relative">
+                    <Plus className={cn(
+                      "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4",
+                      darkMode ? "text-gray-500" : "text-gray-400"
+                    )} />
+                    <input
+                      type="text"
+                      placeholder={`Add a task to ${config.title}...`}
+                      value={quickTaskInputs[quadrant]}
+                      onChange={(e) => setQuickTaskInputs(prev => ({ ...prev, [quadrant]: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          void handleQuickAddTask(quadrant, quickTaskInputs[quadrant]);
+                        }
+                      }}
+                      className={cn(
+                        "w-full pl-10 pr-3 py-2 text-sm rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500",
+                        darkMode 
+                          ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500 hover:border-gray-600" 
+                          : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 hover:border-gray-400"
+                      )}
+                    />
+                  </div>
                 </div>
               </div>
             );
