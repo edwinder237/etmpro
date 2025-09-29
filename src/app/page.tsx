@@ -22,6 +22,7 @@ import toast, { Toaster } from "react-hot-toast";
 import { UserButton } from "@clerk/nextjs";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import { TaskIcon } from "~/components/icons/TaskIcon";
+import { StatCardSkeleton, QuadrantSkeleton, TaskCardSkeleton } from "~/components/skeletons/TaskSkeleton";
 
 type TaskQuadrant = "urgent-important" | "important-not-urgent" | "urgent-not-important" | "not-urgent-not-important";
 type TaskPriority = "high" | "medium" | "low";
@@ -76,6 +77,14 @@ export default function HomePage() {
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [darkMode, setDarkMode] = useState(true);
+  const [isLoading, setIsLoading] = useState(true);
+  const [taskOperationLoading, setTaskOperationLoading] = useState<Record<string, boolean>>({});
+  const [quadrantLoading, setQuadrantLoading] = useState<Record<TaskQuadrant, boolean>>({
+    "urgent-important": false,
+    "important-not-urgent": false,
+    "urgent-not-important": false,
+    "not-urgent-not-important": false,
+  });
   const [hideCompleted, setHideCompleted] = useState<Record<TaskQuadrant, boolean>>({
     "urgent-important": true,
     "important-not-urgent": true,
@@ -108,6 +117,7 @@ export default function HomePage() {
 
   const fetchTasks = async () => {
     try {
+      setIsLoading(true);
       const response = await fetch("/api/tasks");
       if (response.ok) {
         const data = await response.json() as Task[];
@@ -118,11 +128,16 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error fetching tasks:", error);
       toast.error("Error loading tasks");
+    } finally {
+      setIsLoading(false);
     }
   };
 
   const handleAddTask = async () => {
     try {
+      setTaskOperationLoading(prev => ({ ...prev, addTask: true }));
+      setQuadrantLoading(prev => ({ ...prev, [formData.quadrant]: true }));
+      
       const response = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -130,7 +145,8 @@ export default function HomePage() {
       });
       
       if (response.ok) {
-        await fetchTasks();
+        const newTask = await response.json() as Task;
+        setTasks(prev => [...prev, newTask]);
         closeModal();
         toast.success("Task added successfully!");
       } else {
@@ -139,6 +155,9 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error adding task:", error);
       toast.error("Error adding task");
+    } finally {
+      setTaskOperationLoading(prev => ({ ...prev, addTask: false }));
+      setQuadrantLoading(prev => ({ ...prev, [formData.quadrant]: false }));
     }
   };
 
@@ -146,6 +165,9 @@ export default function HomePage() {
     if (!title.trim()) return;
     
     try {
+      setTaskOperationLoading(prev => ({ ...prev, [`quickAdd-${quadrant}`]: true }));
+      setQuadrantLoading(prev => ({ ...prev, [quadrant]: true }));
+      
       const response = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -158,7 +180,8 @@ export default function HomePage() {
       });
       
       if (response.ok) {
-        await fetchTasks();
+        const newTask = await response.json() as Task;
+        setTasks(prev => [...prev, newTask]);
         setQuickTaskInputs(prev => ({ ...prev, [quadrant]: "" }));
         toast.success("Task added!");
       } else {
@@ -167,6 +190,9 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error adding quick task:", error);
       toast.error("Error adding task");
+    } finally {
+      setTaskOperationLoading(prev => ({ ...prev, [`quickAdd-${quadrant}`]: false }));
+      setQuadrantLoading(prev => ({ ...prev, [quadrant]: false }));
     }
   };
 
@@ -174,6 +200,14 @@ export default function HomePage() {
     if (!editingTask) return;
 
     try {
+      setTaskOperationLoading(prev => ({ ...prev, updateTask: true }));
+      // Set loading for both old and new quadrants if they differ
+      setQuadrantLoading(prev => ({ 
+        ...prev, 
+        [editingTask.quadrant]: true,
+        [formData.quadrant]: true 
+      }));
+      
       const response = await fetch("/api/tasks", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -188,7 +222,10 @@ export default function HomePage() {
       });
       
       if (response.ok) {
-        await fetchTasks();
+        const updatedTask = await response.json() as Task;
+        setTasks(prev => prev.map(task => 
+          task._id === updatedTask._id ? updatedTask : task
+        ));
         closeModal();
         toast.success("Task updated successfully!");
       } else {
@@ -197,17 +234,30 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error updating task:", error);
       toast.error("Error updating task");
+    } finally {
+      setTaskOperationLoading(prev => ({ ...prev, updateTask: false }));
+      setQuadrantLoading(prev => ({ 
+        ...prev, 
+        [editingTask.quadrant]: false,
+        [formData.quadrant]: false 
+      }));
     }
   };
 
   const handleDeleteTask = async (id: string) => {
+    const taskToDelete = tasks.find(t => t._id === id);
+    if (!taskToDelete) return;
+    
     try {
+      setTaskOperationLoading(prev => ({ ...prev, [`delete-${id}`]: true }));
+      setQuadrantLoading(prev => ({ ...prev, [taskToDelete.quadrant]: true }));
+      
       const response = await fetch(`/api/tasks?id=${id}`, {
         method: "DELETE"
       });
       
       if (response.ok) {
-        await fetchTasks();
+        setTasks(prev => prev.filter(task => task._id !== id));
         toast.success("Task deleted successfully!");
       } else {
         toast.error("Failed to delete task");
@@ -215,23 +265,35 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error deleting task:", error);
       toast.error("Error deleting task");
+    } finally {
+      setTaskOperationLoading(prev => ({ ...prev, [`delete-${id}`]: false }));
+      setQuadrantLoading(prev => ({ ...prev, [taskToDelete.quadrant]: false }));
     }
   };
 
   const handleToggleComplete = async (task: Task) => {
     try {
+      setTaskOperationLoading(prev => ({ ...prev, [`toggle-${task._id}`]: true }));
+      setQuadrantLoading(prev => ({ ...prev, [task.quadrant]: true }));
+      
+      const newStatus = task.status === "completed" ? "pending" : "completed";
+      
       const response = await fetch("/api/tasks", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           _id: task._id,
-          status: task.status === "completed" ? "pending" : "completed",
+          status: newStatus,
           completedAt: task.status === "completed" ? null : new Date()
         })
       });
       
       if (response.ok) {
-        await fetchTasks();
+        const updatedTask = await response.json() as Task;
+        setTasks(prev => prev.map(t => 
+          t._id === task._id ? updatedTask : t
+        ));
+        
         if (task.status === "completed") {
           toast.success("Task marked as pending");
         } else {
@@ -243,11 +305,21 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error updating task:", error);
       toast.error("Error updating task");
+    } finally {
+      setTaskOperationLoading(prev => ({ ...prev, [`toggle-${task._id}`]: false }));
+      setQuadrantLoading(prev => ({ ...prev, [task.quadrant]: false }));
     }
   };
 
   const handleMoveTask = async (task: Task, newQuadrant: TaskQuadrant) => {
     try {
+      // Set loading for both old and new quadrants
+      setQuadrantLoading(prev => ({ 
+        ...prev, 
+        [task.quadrant]: true,
+        [newQuadrant]: true 
+      }));
+      
       const response = await fetch("/api/tasks", {
         method: "PUT",
         headers: { "Content-Type": "application/json" },
@@ -258,7 +330,10 @@ export default function HomePage() {
       });
       
       if (response.ok) {
-        await fetchTasks();
+        const updatedTask = await response.json() as Task;
+        setTasks(prev => prev.map(t => 
+          t._id === task._id ? updatedTask : t
+        ));
         const quadrantName = quadrantConfig[newQuadrant].title;
         toast.success(`Task moved to ${quadrantName}`);
       } else {
@@ -267,6 +342,12 @@ export default function HomePage() {
     } catch (error) {
       console.error("Error moving task:", error);
       toast.error("Error moving task");
+    } finally {
+      setQuadrantLoading(prev => ({ 
+        ...prev, 
+        [task.quadrant]: false,
+        [newQuadrant]: false 
+      }));
     }
   };
 
@@ -405,7 +486,14 @@ export default function HomePage() {
 
       {/* Stats Cards */}
       <div className="px-4 md:px-6 py-4 md:py-6">
-        <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+        {isLoading ? (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <StatCardSkeleton key={i} darkMode={darkMode} />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           <div className={cn("p-3 md:p-4 rounded-lg", darkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
             <div className="flex items-center justify-between">
               <div>
@@ -446,12 +534,20 @@ export default function HomePage() {
             </div>
           </div>
         </div>
+        )}
       </div>
 
       {/* Eisenhower Matrix */}
       <div className="px-4 md:px-6 pb-4 md:pb-6">
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-          {(Object.keys(quadrantConfig) as TaskQuadrant[]).map((quadrant) => {
+        {isLoading ? (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+            {Array.from({ length: 4 }).map((_, i) => (
+              <QuadrantSkeleton key={i} darkMode={darkMode} />
+            ))}
+          </div>
+        ) : (
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+            {(Object.keys(quadrantConfig) as TaskQuadrant[]).map((quadrant) => {
             const config = quadrantConfig[quadrant];
             const quadrantTasks = getTasksByQuadrant(quadrant);
             
@@ -489,7 +585,13 @@ export default function HomePage() {
                 </div>
 
                 <div className="space-y-2">
-                  {quadrantTasks.length === 0 ? (
+                  {quadrantLoading[quadrant] ? (
+                    <>
+                      {Array.from({ length: Math.max(3, quadrantTasks.length) }).map((_, i) => (
+                        <TaskCardSkeleton key={i} darkMode={darkMode} />
+                      ))}
+                    </>
+                  ) : quadrantTasks.length === 0 ? (
                     <div className="text-center py-8">
                       <button
                         onClick={() => openModalForQuadrant(quadrant)}
@@ -522,11 +624,13 @@ export default function HomePage() {
                           <div className="flex items-start gap-2 md:gap-3 flex-1">
                             <button
                               onClick={() => handleToggleComplete(task)}
+                              disabled={taskOperationLoading[`toggle-${task._id}`]}
                               className={cn(
-                                "mt-0.5 rounded-full",
+                                "mt-0.5 rounded-full transition-opacity",
                                 task.status === "completed" 
                                   ? "text-green-500" 
-                                  : darkMode ? "text-gray-400" : "text-gray-500"
+                                  : darkMode ? "text-gray-400" : "text-gray-500",
+                                taskOperationLoading[`toggle-${task._id}`] && "opacity-50 cursor-not-allowed"
                               )}
                             >
                               {task.status === "completed" ? (
@@ -575,9 +679,11 @@ export default function HomePage() {
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => handleDeleteTask(task._id)}
+                              disabled={taskOperationLoading[`delete-${task._id}`]}
                               className={cn(
-                                "p-1 md:p-1.5 rounded hover:bg-red-500/20 text-red-400",
-                                darkMode ? "hover:bg-red-500/20" : "hover:bg-red-50"
+                                "p-1 md:p-1.5 rounded hover:bg-red-500/20 text-red-400 transition-opacity",
+                                darkMode ? "hover:bg-red-500/20" : "hover:bg-red-50",
+                                taskOperationLoading[`delete-${task._id}`] && "opacity-50 cursor-not-allowed"
                               )}
                             >
                               <Trash2 className="w-3 h-3 md:w-4 md:h-4" />
@@ -665,11 +771,13 @@ export default function HomePage() {
                           void handleQuickAddTask(quadrant, quickTaskInputs[quadrant]);
                         }
                       }}
+                      disabled={taskOperationLoading[`quickAdd-${quadrant}`]}
                       className={cn(
                         "w-full pl-10 pr-3 py-2 text-sm rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500",
                         darkMode 
                           ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500 hover:border-gray-600" 
-                          : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 hover:border-gray-400"
+                          : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 hover:border-gray-400",
+                        taskOperationLoading[`quickAdd-${quadrant}`] && "opacity-50 cursor-not-allowed"
                       )}
                     />
                   </div>
@@ -677,7 +785,8 @@ export default function HomePage() {
               </div>
             );
           })}
-        </div>
+          </div>
+        )}
       </div>
 
       {/* Floating Action Button */}
@@ -825,10 +934,12 @@ export default function HomePage() {
               </button>
               <button
                 onClick={editingTask ? handleUpdateTask : handleAddTask}
-                disabled={!formData.title}
+                disabled={!formData.title || (taskOperationLoading.addTask ?? taskOperationLoading.updateTask)}
                 className="flex-1 px-4 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
               >
-                {editingTask ? "Update Task" : "Add Task"}
+                {(taskOperationLoading.addTask ?? taskOperationLoading.updateTask)
+                  ? "Processing..." 
+                  : editingTask ? "Update Task" : "Add Task"}
               </button>
             </div>
           </div>
