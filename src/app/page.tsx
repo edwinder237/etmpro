@@ -424,15 +424,31 @@ export default function HomePage() {
       setTaskOperationLoading(prev => ({ ...prev, addTask: true }));
       setQuadrantLoading(prev => ({ ...prev, [formData.quadrant]: true }));
 
-      const taskData = {
-        ...formData,
-        priority: formData.quadrant === "urgent-important" ? "high" : formData.priority
-      };
+      // Convert date and time to ISO datetime if provided
+      let dueDateValue: string | undefined = undefined;
+      if (formData.dueDate) {
+        const dateParts = formData.dueDate.split('-').map(Number);
+        const timeParts = formData.dueTime.split(':').map(Number);
+        const year = dateParts[0] ?? 2025;
+        const month = dateParts[1] ?? 1;
+        const day = dateParts[2] ?? 1;
+        const hours = timeParts[0] ?? 12;
+        const minutes = timeParts[1] ?? 0;
+
+        const newDate = new Date(year, month - 1, day, hours, minutes, 0, 0);
+        dueDateValue = newDate.toISOString();
+      }
 
       const response = await fetch("/api/tasks", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(taskData)
+        body: JSON.stringify({
+          title: formData.title,
+          description: formData.description,
+          quadrant: formData.quadrant,
+          priority: formData.quadrant === "urgent-important" ? "high" : formData.priority,
+          dueDate: dueDateValue
+        })
       });
       
       if (response.ok) {
@@ -2429,6 +2445,38 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Footer */}
+      <footer className={cn(
+        "border-t py-6 mt-8",
+        darkMode ? "border-gray-800 bg-gray-900/50" : "border-gray-200 bg-white/50"
+      )}>
+        <div className="px-4 md:px-6">
+          <div className="flex flex-col md:flex-row items-center justify-between gap-4">
+            <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-500")}>
+              {new Date().getFullYear()} All rights reserved.
+            </p>
+            <div className="flex items-center gap-2">
+              <span className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-500")}>
+                Created by
+              </span>
+              <a
+                href="https://www.lumeve.ca/"
+                target="_blank"
+                rel="noopener noreferrer"
+                className={cn(
+                  "text-sm font-medium transition-colors",
+                  darkMode
+                    ? "text-blue-400 hover:text-blue-300"
+                    : "text-blue-600 hover:text-blue-700"
+                )}
+              >
+                Lumeve
+              </a>
+            </div>
+          </div>
+        </div>
+      </footer>
 
       {/* Toast Notifications */}
       <Toaster
