@@ -17,6 +17,7 @@ export interface Task {
   createdAt: Date;
   updatedAt: Date;
   userId?: string;
+  parentTaskId?: ObjectId;  // References parent task if this is a subtask
 }
 
 export interface RoutineTask {

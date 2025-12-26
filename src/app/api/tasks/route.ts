@@ -23,6 +23,7 @@ const createTaskSchema = z.object({
   status: taskStatusSchema.optional(),
   dueDate: z.string().datetime().optional(),
   duration: z.number().int().min(1).max(1440).optional(),
+  parentTaskId: z.string().optional(),  // For subtask creation
 });
 
 const updateTaskSchema = z.object({
@@ -39,7 +40,7 @@ const updateTaskSchema = z.object({
 export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth();
-    
+
     if (!userId) {
       return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
     }
@@ -50,11 +51,15 @@ export async function GET(request: NextRequest) {
     const priority = searchParams.get("priority");
     const status = searchParams.get("status");
 
-    const filter: Filter<Task> = { userId };
-    
+    // Build match filter for parent tasks only (no parentTaskId)
+    const matchFilter: Record<string, unknown> = {
+      userId,
+      parentTaskId: { $exists: false }  // Only fetch parent tasks
+    };
+
     if (search) {
       const escapedSearch = escapeRegex(search);
-      filter.$or = [
+      matchFilter.$or = [
         { title: { $regex: escapedSearch, $options: "i" } },
         { description: { $regex: escapedSearch, $options: "i" } }
       ];
@@ -62,16 +67,50 @@ export async function GET(request: NextRequest) {
 
     // Validate enum values before using
     if (quadrant && taskQuadrantSchema.safeParse(quadrant).success) {
-      filter.quadrant = quadrant as TaskQuadrant;
+      matchFilter.quadrant = quadrant as TaskQuadrant;
     }
     if (priority && taskPrioritySchema.safeParse(priority).success) {
-      filter.priority = priority as TaskPriority;
+      matchFilter.priority = priority as TaskPriority;
     }
     if (status && taskStatusSchema.safeParse(status).success) {
-      filter.status = status as TaskStatus;
+      matchFilter.status = status as TaskStatus;
     }
 
-    const tasks = await tasksCollection.find(filter).sort({ createdAt: -1 }).toArray();
+    // Use aggregation to include subtask counts
+    const tasks = await tasksCollection.aggregate([
+      { $match: matchFilter },
+      {
+        $lookup: {
+          from: "tasks",
+          let: { parentId: "$_id" },
+          pipeline: [
+            {
+              $match: {
+                $expr: { $eq: ["$parentTaskId", "$$parentId"] },
+                userId: userId
+              }
+            },
+            { $project: { status: 1 } }
+          ],
+          as: "subtasks"
+        }
+      },
+      {
+        $addFields: {
+          subtaskCount: { $size: "$subtasks" },
+          subtaskCompletedCount: {
+            $size: {
+              $filter: {
+                input: "$subtasks",
+                cond: { $eq: ["$$this.status", "completed"] }
+              }
+            }
+          }
+        }
+      },
+      { $project: { subtasks: 0 } },
+      { $sort: { createdAt: -1 } }
+    ]).toArray();
 
     return NextResponse.json(tasks);
   } catch {
@@ -98,15 +137,43 @@ export async function POST(request: NextRequest) {
     }
 
     const body = parseResult.data;
+    let quadrant = body.quadrant;
+    let parentTaskId: ObjectId | undefined;
+
+    // Handle subtask creation
+    if (body.parentTaskId) {
+      if (!ObjectId.isValid(body.parentTaskId)) {
+        return NextResponse.json({ error: "Invalid parent task ID" }, { status: 400 });
+      }
+
+      // Verify parent task exists, belongs to user, and is not itself a subtask
+      const parentTask = await tasksCollection.findOne({
+        _id: new ObjectId(body.parentTaskId),
+        userId,
+        parentTaskId: { $exists: false }  // Parent must not be a subtask
+      });
+
+      if (!parentTask) {
+        return NextResponse.json(
+          { error: "Parent task not found or is already a subtask" },
+          { status: 400 }
+        );
+      }
+
+      // Inherit quadrant from parent
+      quadrant = parentTask.quadrant;
+      parentTaskId = new ObjectId(body.parentTaskId);
+    }
 
     const newTask: Task = {
       title: body.title,
       description: body.description,
-      quadrant: body.quadrant,
+      quadrant,
       priority: body.priority,
       status: body.status ?? "pending",
       dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
       duration: body.duration,
+      parentTaskId,
       createdAt: new Date(),
       updatedAt: new Date(),
       userId,
@@ -177,6 +244,14 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Task not found" }, { status: 404 });
     }
 
+    // If quadrant changed on a parent task, cascade to all subtasks
+    if (restUpdateData.quadrant) {
+      await tasksCollection.updateMany(
+        { parentTaskId: new ObjectId(_id), userId },
+        { $set: { quadrant: restUpdateData.quadrant, updatedAt: new Date() } }
+      );
+    }
+
     // IDOR fix: Include userId in findOne query
     const updatedTask = await tasksCollection.findOne({ _id: new ObjectId(_id), userId });
     return NextResponse.json(updatedTask);
@@ -205,6 +280,13 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Invalid task ID format" }, { status: 400 });
     }
 
+    // First, delete all subtasks of this task (cascade delete)
+    await tasksCollection.deleteMany({
+      parentTaskId: new ObjectId(id),
+      userId
+    });
+
+    // Then delete the task itself
     const result = await tasksCollection.deleteOne({ _id: new ObjectId(id), userId });
 
     if (result.deletedCount === 0) {

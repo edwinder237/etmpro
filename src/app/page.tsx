@@ -52,7 +52,9 @@ import { UserButton } from "@clerk/nextjs";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import { TaskIcon } from "~/components/icons/TaskIcon";
+import { EisenqLogo } from "~/components/icons/EisenqLogo";
 import { StatCardSkeleton, QuadrantSkeleton, TaskCardSkeleton } from "~/components/skeletons/TaskSkeleton";
+import { useAudioFeedback } from "~/hooks/useAudioFeedback";
 
 type TaskQuadrant = "urgent-important" | "important-not-urgent" | "urgent-not-important" | "not-urgent-not-important";
 type TaskPriority = "high" | "medium" | "low";
@@ -70,6 +72,9 @@ interface Task {
   duration?: number;
   createdAt: string;
   updatedAt: string;
+  parentTaskId?: string;
+  subtaskCount?: number;
+  subtaskCompletedCount?: number;
 }
 
 interface RoutineTask {
@@ -121,7 +126,10 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
-  const [darkMode, setDarkMode] = useState(true);
+  const [darkMode, setDarkMode] = useState<boolean | null>(null);
+  // Use dark mode as default during SSR/initial render to prevent flash
+  const isDarkMode = darkMode ?? true;
+  const { playCompletionSound, playUncompleteSound } = useAudioFeedback();
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [taskOperationLoading, setTaskOperationLoading] = useState<Record<string, boolean>>({});
@@ -195,6 +203,11 @@ export default function HomePage() {
     priority: "medium" as TaskPriority,
     duration: "" as number | "",
   });
+
+  // Subtask state (for edit modal)
+  const [subtasks, setSubtasks] = useState<Task[]>([]);
+  const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
+  const [subtasksLoading, setSubtasksLoading] = useState(false);
 
   // Helper to extract time from dueDate
   const getTimeFromDate = (dateString: string) => {
@@ -418,6 +431,28 @@ export default function HomePage() {
     void fetchRoutineTasks();
   }, []);
 
+  // Initialize dark mode from localStorage or system preference
+  useEffect(() => {
+    const stored = localStorage.getItem("eisenq-dark-mode");
+    if (stored !== null) {
+      setDarkMode(stored === "true");
+    } else {
+      // Use system preference
+      const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+      setDarkMode(mediaQuery.matches);
+
+      // Listen for system preference changes
+      const handler = (e: MediaQueryListEvent) => {
+        // Only update if user hasn't set a preference
+        if (localStorage.getItem("eisenq-dark-mode") === null) {
+          setDarkMode(e.matches);
+        }
+      };
+      mediaQuery.addEventListener("change", handler);
+      return () => mediaQuery.removeEventListener("change", handler);
+    }
+  }, []);
+
   // Lock body scroll when any modal/drawer is open
   useEffect(() => {
     const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || statsDrawerType !== null || isRoutineDrawerOpen;
@@ -590,9 +625,20 @@ export default function HomePage() {
 
       if (response.ok) {
         const updatedTask = await response.json() as Task;
-        setTasks(prev => prev.map(task => 
-          task._id === updatedTask._id ? updatedTask : task
-        ));
+        // Preserve subtask counts - use current subtasks array as source of truth
+        // since editingTask might have stale values due to closure
+        setTasks(prev => {
+          const existingTask = prev.find(t => t._id === updatedTask._id);
+          return prev.map(task =>
+            task._id === updatedTask._id
+              ? {
+                  ...updatedTask,
+                  subtaskCount: existingTask?.subtaskCount ?? 0,
+                  subtaskCompletedCount: existingTask?.subtaskCompletedCount ?? 0
+                }
+              : task
+          );
+        });
         closeModal();
         toast.success("Task updated successfully!");
       } else {
@@ -661,8 +707,10 @@ export default function HomePage() {
         
         if (task.status === "completed") {
           toast.success("Task marked as pending");
+          playUncompleteSound();
         } else {
           toast.success("Task completed! 🎉");
+          playCompletionSound();
         }
       } else {
         toast.error("Failed to update task");
@@ -672,6 +720,184 @@ export default function HomePage() {
     } finally {
       setTaskOperationLoading(prev => ({ ...prev, [`toggle-${task._id}`]: false }));
       setQuadrantLoading(prev => ({ ...prev, [task.quadrant]: false }));
+    }
+  };
+
+  // Subtask handlers
+  const handleAddSubtask = async () => {
+    if (!editingTask || !newSubtaskTitle.trim()) return;
+
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: newSubtaskTitle.trim(),
+          parentTaskId: editingTask._id,
+          quadrant: editingTask.quadrant,
+          priority: "medium",
+        })
+      });
+
+      if (response.ok) {
+        const newSubtask = await response.json() as Task;
+        setSubtasks(prev => [...prev, newSubtask]);
+        setNewSubtaskTitle("");
+
+        // Update parent task's subtask count in local state
+        setTasks(prev => prev.map(t =>
+          t._id === editingTask._id
+            ? {
+                ...t,
+                subtaskCount: (t.subtaskCount ?? 0) + 1,
+                subtaskCompletedCount: t.subtaskCompletedCount ?? 0
+              }
+            : t
+        ));
+        // Also update editingTask
+        setEditingTask(prev => prev ? {
+          ...prev,
+          subtaskCount: (prev.subtaskCount ?? 0) + 1,
+          subtaskCompletedCount: prev.subtaskCompletedCount ?? 0
+        } : null);
+
+        toast.success("Subtask added");
+      } else {
+        toast.error("Failed to add subtask");
+      }
+    } catch {
+      toast.error("Error adding subtask");
+    }
+  };
+
+  const handleToggleSubtaskComplete = async (subtask: Task) => {
+    const newStatus = subtask.status === "completed" ? "pending" : "completed";
+
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _id: subtask._id,
+          status: newStatus,
+        })
+      });
+
+      if (response.ok) {
+        const updatedSubtask = await response.json() as Task;
+        setSubtasks(prev => prev.map(s =>
+          s._id === subtask._id ? updatedSubtask : s
+        ));
+
+        // Calculate new completed count
+        const newCompletedCount = subtasks.filter(s =>
+          s._id === subtask._id ? newStatus === "completed" : s.status === "completed"
+        ).length;
+
+        // Update parent's completed count
+        setTasks(prev => prev.map(t =>
+          t._id === editingTask?._id
+            ? { ...t, subtaskCompletedCount: newCompletedCount }
+            : t
+        ));
+        setEditingTask(prev => prev ? {
+          ...prev,
+          subtaskCompletedCount: newCompletedCount
+        } : null);
+
+        // Check if all subtasks are now complete - prompt to complete parent
+        const allComplete = subtasks.every(s =>
+          s._id === subtask._id ? newStatus === "completed" : s.status === "completed"
+        );
+
+        if (allComplete && editingTask?.status !== "completed" && subtasks.length > 0) {
+          toast((t) => (
+            <div className="flex items-center gap-3">
+              <span>All subtasks complete! Complete parent task?</span>
+              <button
+                onClick={() => {
+                  void handleCompleteParentTask();
+                  toast.dismiss(t.id);
+                }}
+                className="px-3 py-1 bg-green-600 text-white rounded text-sm"
+              >
+                Yes
+              </button>
+              <button
+                onClick={() => toast.dismiss(t.id)}
+                className="px-3 py-1 bg-gray-600 text-white rounded text-sm"
+              >
+                No
+              </button>
+            </div>
+          ), { duration: 10000 });
+        }
+      }
+    } catch {
+      toast.error("Failed to update subtask");
+    }
+  };
+
+  const handleDeleteSubtask = async (subtaskId: string) => {
+    try {
+      const response = await fetch(`/api/tasks?id=${subtaskId}`, {
+        method: "DELETE"
+      });
+
+      if (response.ok) {
+        const deletedSubtask = subtasks.find(s => s._id === subtaskId);
+        setSubtasks(prev => prev.filter(s => s._id !== subtaskId));
+
+        // Update parent task counts
+        setTasks(prev => prev.map(t =>
+          t._id === editingTask?._id
+            ? {
+                ...t,
+                subtaskCount: Math.max(0, (t.subtaskCount ?? 1) - 1),
+                subtaskCompletedCount: deletedSubtask?.status === "completed"
+                  ? Math.max(0, (t.subtaskCompletedCount ?? 1) - 1)
+                  : t.subtaskCompletedCount
+              }
+            : t
+        ));
+        setEditingTask(prev => prev ? {
+          ...prev,
+          subtaskCount: Math.max(0, (prev.subtaskCount ?? 1) - 1),
+          subtaskCompletedCount: deletedSubtask?.status === "completed"
+            ? Math.max(0, (prev.subtaskCompletedCount ?? 1) - 1)
+            : prev.subtaskCompletedCount
+        } : null);
+
+        toast.success("Subtask deleted");
+      }
+    } catch {
+      toast.error("Failed to delete subtask");
+    }
+  };
+
+  const handleCompleteParentTask = async () => {
+    if (!editingTask) return;
+
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _id: editingTask._id,
+          status: "completed",
+        })
+      });
+
+      if (response.ok) {
+        const updatedTask = await response.json() as Task;
+        setTasks(prev => prev.map(t =>
+          t._id === editingTask._id ? { ...t, ...updatedTask } : t
+        ));
+        setEditingTask(prev => prev ? { ...prev, ...updatedTask } : null);
+        toast.success("Task completed!");
+      }
+    } catch {
+      toast.error("Failed to complete task");
     }
   };
 
@@ -868,6 +1094,8 @@ export default function HomePage() {
   const closeModal = () => {
     setIsModalOpen(false);
     resetFormState();
+    setSubtasks([]);
+    setNewSubtaskTitle("");
   };
 
   const openModalForQuadrant = (quadrant: TaskQuadrant) => {
@@ -884,7 +1112,7 @@ export default function HomePage() {
     setIsModalOpen(true);
   };
 
-  const openTaskForEdit = (task: Task) => {
+  const openTaskForEdit = async (task: Task) => {
     setEditingTask(task);
     const taskDate = task.dueDate ? new Date(task.dueDate) : null;
     setFormData({
@@ -897,6 +1125,24 @@ export default function HomePage() {
       duration: task.duration ?? ""
     });
     setIsModalOpen(true);
+
+    // Fetch subtasks if this is a parent task (not a subtask itself)
+    if (!task.parentTaskId && task.subtaskCount !== undefined && task.subtaskCount > 0) {
+      setSubtasksLoading(true);
+      try {
+        const response = await fetch(`/api/tasks/${task._id}/subtasks`);
+        if (response.ok) {
+          const data = await response.json() as Task[];
+          setSubtasks(data);
+        }
+      } catch {
+        toast.error("Failed to load subtasks");
+      } finally {
+        setSubtasksLoading(false);
+      }
+    } else {
+      setSubtasks([]);
+    }
   };
 
   const toggleCompletedVisibility = (quadrant: TaskQuadrant) => {
@@ -1022,30 +1268,28 @@ export default function HomePage() {
   };
 
   return (
-    <div className={cn("min-h-screen", darkMode ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900")}>
+    <div className={cn("min-h-screen", isDarkMode ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900")}>
       {/* Header */}
       <header className={cn(
         "border-b sticky top-0 z-30 backdrop-blur-md",
-        darkMode ? "border-gray-800/50 bg-gray-900/80" : "border-gray-200/50 bg-white/80"
+        isDarkMode ? "border-gray-800/50 bg-gray-900/80" : "border-gray-200/50 bg-white/80"
       )}>
         <div className="px-4 md:px-6 py-4">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
             <div className="flex items-center gap-3">
-              <div className="bg-blue-600 p-2 rounded-lg">
-                <TaskIcon className="w-5 h-5 text-white" size={20} />
-              </div>
-              <div>
-                <h1 className="text-xl font-bold">ETM</h1>
-                <p className={cn("text-sm hidden sm:block", darkMode ? "text-gray-400" : "text-gray-600")}>
-                  Effective Time Management
-                </p>
+              <EisenqLogo size={36} />
+              <div className="flex items-baseline gap-2">
+                <h1 className="text-xl font-bold">EisenQ</h1>
+                <span className={cn("text-sm hidden sm:block", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                  Decide & Do
+                </span>
               </div>
             </div>
 
             <div className="flex items-center gap-2 md:gap-4">
               <div className="relative flex-1 md:flex-none">
                 <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4", 
-                  darkMode ? "text-gray-400" : "text-gray-600")} />
+                  isDarkMode ? "text-gray-400" : "text-gray-600")} />
                 <input
                   type="text"
                   placeholder="Search tasks..."
@@ -1053,14 +1297,14 @@ export default function HomePage() {
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className={cn(
                     "pl-10 pr-4 py-2 rounded-lg w-full md:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500",
-                    darkMode ? "bg-gray-800 text-white placeholder-gray-500" : "bg-gray-100 text-gray-900 placeholder-gray-400"
+                    isDarkMode ? "bg-gray-800 text-white placeholder-gray-500" : "bg-gray-100 text-gray-900 placeholder-gray-400"
                   )}
                 />
               </div>
               
               <button
                 onClick={() => setIsCalendarDrawerOpen(true)}
-                className={cn("p-2 rounded-lg", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
                 title="Task Planning Calendar"
               >
                 <CalendarDays className="w-5 h-5" />
@@ -1068,7 +1312,7 @@ export default function HomePage() {
 
               <button
                 onClick={() => setIsRoutineDrawerOpen(true)}
-                className={cn("p-2 rounded-lg", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
                 title="Routine Tasks"
               >
                 <Repeat className="w-5 h-5" />
@@ -1076,20 +1320,24 @@ export default function HomePage() {
 
               <button
                 onClick={() => setIsInfoModalOpen(true)}
-                className={cn("p-2 rounded-lg", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
                 title="How the Eisenhower Matrix works"
               >
                 <Info className="w-5 h-5" />
               </button>
 
               <button
-                onClick={() => setDarkMode(!darkMode)}
-                className={cn("p-2 rounded-lg", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+                onClick={() => {
+                  const newValue = !isDarkMode;
+                  setDarkMode(newValue);
+                  localStorage.setItem("eisenq-dark-mode", String(newValue));
+                }}
+                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
               >
-                {darkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+                {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
 
-              <button className={cn("p-2 rounded-lg hidden sm:block", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
+              <button className={cn("p-2 rounded-lg hidden sm:block", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
                 <Settings className="w-5 h-5" />
               </button>
               
@@ -1110,18 +1358,18 @@ export default function HomePage() {
       <div className="px-4 md:px-6 py-4 md:py-6">
         {isLoading ? (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-            <div className="hidden md:block"><StatCardSkeleton darkMode={darkMode} /></div>
-            <div className="hidden md:block"><StatCardSkeleton darkMode={darkMode} /></div>
-            <StatCardSkeleton darkMode={darkMode} />
-            <StatCardSkeleton darkMode={darkMode} />
+            <div className="hidden md:block"><StatCardSkeleton darkMode={isDarkMode} /></div>
+            <div className="hidden md:block"><StatCardSkeleton darkMode={isDarkMode} /></div>
+            <StatCardSkeleton darkMode={isDarkMode} />
+            <StatCardSkeleton darkMode={isDarkMode} />
           </div>
         ) : (
           <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
           {/* Total Tasks - hidden on small screens */}
-          <div className={cn("hidden md:block p-3 md:p-4 rounded-lg", darkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+          <div className={cn("hidden md:block p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
             <div className="flex items-center justify-between">
               <div>
-                <p className={cn("text-xs md:text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>Total Tasks</p>
+                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>Total Tasks</p>
                 <button
                   onClick={() => setStatsDrawerType("total")}
                   className="text-xl md:text-2xl font-bold mt-1 hover:text-blue-500 transition-colors cursor-pointer"
@@ -1134,10 +1382,10 @@ export default function HomePage() {
           </div>
 
           {/* Completed - hidden on small screens */}
-          <div className={cn("hidden md:block p-3 md:p-4 rounded-lg", darkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+          <div className={cn("hidden md:block p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
             <div className="flex items-center justify-between">
               <div>
-                <p className={cn("text-xs md:text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>Completed</p>
+                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>Completed</p>
                 <button
                   onClick={() => setStatsDrawerType("completed")}
                   className="text-xl md:text-2xl font-bold mt-1 hover:text-green-500 transition-colors cursor-pointer"
@@ -1150,10 +1398,10 @@ export default function HomePage() {
           </div>
 
           {/* High Priority - always visible */}
-          <div className={cn("p-3 md:p-4 rounded-lg", darkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+          <div className={cn("p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
             <div className="flex items-center justify-between">
               <div>
-                <p className={cn("text-xs md:text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>High Priority</p>
+                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>High Priority</p>
                 <button
                   onClick={() => setStatsDrawerType("highPriority")}
                   className="text-xl md:text-2xl font-bold mt-1 hover:text-red-500 transition-colors cursor-pointer"
@@ -1166,10 +1414,10 @@ export default function HomePage() {
           </div>
 
           {/* This Week - always visible */}
-          <div className={cn("p-3 md:p-4 rounded-lg", darkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+          <div className={cn("p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
             <div className="flex items-center justify-between">
               <div>
-                <p className={cn("text-xs md:text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>This Week</p>
+                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>This Week</p>
                 <button
                   onClick={() => setStatsDrawerType("thisWeek")}
                   className="text-xl md:text-2xl font-bold mt-1 hover:text-blue-500 transition-colors cursor-pointer"
@@ -1199,13 +1447,13 @@ export default function HomePage() {
               "data-[state=open]:animate-in data-[state=closed]:animate-out",
               "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
               "duration-300 ease-in-out",
-              darkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
             )}
           >
             {statsDrawerType && (
               <div className="flex flex-col h-full">
                 {/* Drawer Header */}
-                <div className={cn("flex items-center justify-between p-4 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
+                <div className={cn("flex items-center justify-between p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
                   <div className="flex items-center gap-3">
                     <div className={cn("p-2 rounded-lg", statsDrawerConfig[statsDrawerType].color.replace("text-", "bg-").replace("500", "600/20"))}>
                       <span className={statsDrawerConfig[statsDrawerType].color}>
@@ -1214,7 +1462,7 @@ export default function HomePage() {
                     </div>
                     <div>
                       <Dialog.Title className="text-lg font-semibold">{statsDrawerConfig[statsDrawerType].title}</Dialog.Title>
-                      <Dialog.Description className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                      <Dialog.Description className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                         {selectedTaskIds.size > 0
                           ? `${selectedTaskIds.size} selected`
                           : `${getTasksForStat(statsDrawerType).length} task${getTasksForStat(statsDrawerType).length !== 1 ? "s" : ""}`
@@ -1226,7 +1474,7 @@ export default function HomePage() {
                     <button
                       className={cn(
                         "p-2 rounded-lg transition-colors",
-                        darkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
+                        isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
                       )}
                     >
                       <X className="w-5 h-5" />
@@ -1236,7 +1484,7 @@ export default function HomePage() {
 
                 {/* Selection Actions Bar */}
                 {getTasksForStat(statsDrawerType).length > 0 && (
-                  <div className={cn("flex items-center justify-between px-4 py-2 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
+                  <div className={cn("flex items-center justify-between px-4 py-2 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
                     <div className="flex items-center gap-2">
                       <button
                         onClick={() => {
@@ -1249,7 +1497,7 @@ export default function HomePage() {
                         }}
                         className={cn(
                           "text-sm px-3 py-1.5 rounded-lg transition-colors",
-                          darkMode ? "hover:bg-gray-800 text-gray-300" : "hover:bg-gray-100 text-gray-700"
+                          isDarkMode ? "hover:bg-gray-800 text-gray-300" : "hover:bg-gray-100 text-gray-700"
                         )}
                       >
                         {selectedTaskIds.size === getTasksForStat(statsDrawerType).length ? "Deselect All" : "Select All"}
@@ -1259,7 +1507,7 @@ export default function HomePage() {
                           onClick={clearSelection}
                           className={cn(
                             "text-sm px-3 py-1.5 rounded-lg transition-colors",
-                            darkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-500"
+                            isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-500"
                           )}
                         >
                           Clear
@@ -1286,7 +1534,7 @@ export default function HomePage() {
                 {/* Task List */}
                 <div className="flex-1 overflow-y-auto p-4">
                   {getTasksForStat(statsDrawerType).length === 0 ? (
-                    <div className={cn("text-center py-12", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <div className={cn("text-center py-12", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                       <p>No tasks found</p>
                     </div>
                   ) : (
@@ -1301,8 +1549,8 @@ export default function HomePage() {
                             task.quadrant === "urgent-not-important" && "border-l-blue-500",
                             task.quadrant === "not-urgent-not-important" && "border-l-green-500",
                             selectedTaskIds.has(task._id)
-                              ? darkMode ? "bg-blue-900/30 ring-1 ring-blue-500/50" : "bg-blue-50 ring-1 ring-blue-300"
-                              : darkMode ? "bg-gray-800 hover:bg-gray-750" : "bg-gray-50 hover:bg-gray-100"
+                              ? isDarkMode ? "bg-blue-900/30 ring-1 ring-blue-500/50" : "bg-blue-50 ring-1 ring-blue-300"
+                              : isDarkMode ? "bg-gray-800 hover:bg-gray-750" : "bg-gray-50 hover:bg-gray-100"
                           )}
                         >
                           <div className="flex items-start gap-3">
@@ -1316,7 +1564,7 @@ export default function HomePage() {
                                 "flex-shrink-0 w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center transition-colors",
                                 selectedTaskIds.has(task._id)
                                   ? "bg-blue-600 border-blue-600"
-                                  : darkMode ? "border-gray-600 hover:border-gray-500" : "border-gray-300 hover:border-gray-400"
+                                  : isDarkMode ? "border-gray-600 hover:border-gray-500" : "border-gray-300 hover:border-gray-400"
                               )}
                             >
                               {selectedTaskIds.has(task._id) && (
@@ -1342,7 +1590,7 @@ export default function HomePage() {
                               {task.description && (
                                 <p className={cn(
                                   "text-sm mt-1 line-clamp-2",
-                                  darkMode ? "text-gray-400" : "text-gray-600"
+                                  isDarkMode ? "text-gray-400" : "text-gray-600"
                                 )}>
                                   {task.description}
                                 </p>
@@ -1363,7 +1611,7 @@ export default function HomePage() {
                                   </span>
                                 )}
                                 {task.dueDate && (
-                                  <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                                     {format(new Date(task.dueDate), "MMM dd")} • {format(new Date(task.dueDate), "HH:mm")}
                                   </span>
                                 )}
@@ -1395,19 +1643,19 @@ export default function HomePage() {
               "data-[state=open]:animate-in data-[state=closed]:animate-out",
               "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
               "duration-300 ease-in-out",
-              darkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
             )}
           >
             <div className="flex flex-col h-full">
               {/* Drawer Header */}
-              <div className={cn("flex items-center justify-between p-4 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
+              <div className={cn("flex items-center justify-between p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-blue-600/20">
                     <CalendarDays className="w-5 h-5 text-blue-500" />
                   </div>
                   <div>
                     <Dialog.Title className="text-lg font-semibold">Task Planning</Dialog.Title>
-                    <Dialog.Description className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    <Dialog.Description className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                       Schedule and organize your tasks
                     </Dialog.Description>
                   </div>
@@ -1416,7 +1664,7 @@ export default function HomePage() {
                   <button
                     className={cn(
                       "p-2 rounded-lg transition-colors",
-                      darkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
+                      isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
                     )}
                   >
                     <X className="w-5 h-5" />
@@ -1425,15 +1673,15 @@ export default function HomePage() {
               </div>
 
               {/* View Tabs */}
-              <div className={cn("p-4 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
-                <div className={cn("flex rounded-lg p-1", darkMode ? "bg-gray-800" : "bg-gray-100")}>
+              <div className={cn("p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
+                <div className={cn("flex rounded-lg p-1", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
                   <button
                     onClick={() => setCalendarView("day")}
                     className={cn(
                       "flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
                       calendarView === "day"
                         ? "bg-blue-600 text-white"
-                        : darkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
+                        : isDarkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
                     )}
                   >
                     <Clock className="w-4 h-4" />
@@ -1445,7 +1693,7 @@ export default function HomePage() {
                       "flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
                       calendarView === "week"
                         ? "bg-blue-600 text-white"
-                        : darkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
+                        : isDarkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
                     )}
                   >
                     <CalendarRange className="w-4 h-4" />
@@ -1457,7 +1705,7 @@ export default function HomePage() {
                       "flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
                       calendarView === "month"
                         ? "bg-blue-600 text-white"
-                        : darkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
+                        : isDarkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
                     )}
                   >
                     <Calendar className="w-4 h-4" />
@@ -1474,7 +1722,7 @@ export default function HomePage() {
                     onClick={() => navigateCalendar("prev")}
                     className={cn(
                       "p-2 rounded-lg transition-colors",
-                      darkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
+                      isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
                     )}
                   >
                     <ChevronLeft className="w-5 h-5" />
@@ -1493,7 +1741,7 @@ export default function HomePage() {
                     onClick={() => navigateCalendar("next")}
                     className={cn(
                       "p-2 rounded-lg transition-colors",
-                      darkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
+                      isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
                     )}
                   >
                     <ChevronRight className="w-5 h-5" />
@@ -1504,12 +1752,12 @@ export default function HomePage() {
                 {calendarView === "day" && (
                   <div className="space-y-3">
                     {getTasksForDate(selectedDate).length === 0 ? (
-                      <div className={cn("text-center py-12 rounded-lg", darkMode ? "bg-gray-800" : "bg-gray-50")}>
-                        <CalendarDays className={cn("w-12 h-12 mx-auto mb-3", darkMode ? "text-gray-600" : "text-gray-400")} />
-                        <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                      <div className={cn("text-center py-12 rounded-lg", isDarkMode ? "bg-gray-800" : "bg-gray-50")}>
+                        <CalendarDays className={cn("w-12 h-12 mx-auto mb-3", isDarkMode ? "text-gray-600" : "text-gray-400")} />
+                        <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                           No tasks scheduled for this day
                         </p>
-                        <p className={cn("text-xs mt-1", darkMode ? "text-gray-500" : "text-gray-500")}>
+                        <p className={cn("text-xs mt-1", isDarkMode ? "text-gray-500" : "text-gray-500")}>
                           Add tasks with due dates to see them here
                         </p>
                       </div>
@@ -1524,18 +1772,18 @@ export default function HomePage() {
                             task.quadrant === "important-not-urgent" && "border-l-yellow-500",
                             task.quadrant === "urgent-not-important" && "border-l-blue-500",
                             task.quadrant === "not-urgent-not-important" && "border-l-green-500",
-                            darkMode ? "bg-gray-800 hover:bg-gray-750" : "bg-gray-50 hover:bg-gray-100"
+                            isDarkMode ? "bg-gray-800 hover:bg-gray-750" : "bg-gray-50 hover:bg-gray-100"
                           )}
                         >
                           <div className={cn(
                             "flex-shrink-0 px-3 py-1 rounded-lg text-sm font-medium",
-                            darkMode ? "bg-gray-700" : "bg-white border border-gray-200"
+                            isDarkMode ? "bg-gray-700" : "bg-white border border-gray-200"
                           )}>
                             {task.dueDate ? format(new Date(task.dueDate), "HH:mm") : "--:--"}
                           </div>
                           <div className="flex-1">
                             <h4 className="font-medium">{task.title}</h4>
-                            <p className={cn("text-sm mt-1", darkMode ? "text-gray-400" : "text-gray-600")}>
+                            <p className={cn("text-sm mt-1", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                               {task.description}
                             </p>
                             <div className="flex items-center gap-3 mt-2">
@@ -1550,8 +1798,19 @@ export default function HomePage() {
                                 {task.priority}
                               </span>
                               {task.duration && (
-                                <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                                   {task.duration} min
+                                </span>
+                              )}
+                              {task.subtaskCount !== undefined && task.subtaskCount > 0 && (
+                                <span className={cn(
+                                  "text-xs flex items-center gap-1",
+                                  task.subtaskCompletedCount === task.subtaskCount
+                                    ? "text-green-500"
+                                    : isDarkMode ? "text-gray-500" : "text-gray-400"
+                                )}>
+                                  <CheckCircle2 className="w-3 h-3" />
+                                  {task.subtaskCompletedCount}/{task.subtaskCount}
                                 </span>
                               )}
                             </div>
@@ -1567,7 +1826,7 @@ export default function HomePage() {
                   <div className="grid grid-cols-7 gap-2">
                     {/* Day headers */}
                     {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                      <div key={day} className={cn("text-center text-xs font-medium py-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                      <div key={day} className={cn("text-center text-xs font-medium py-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                         {day}
                       </div>
                     ))}
@@ -1591,7 +1850,7 @@ export default function HomePage() {
                         >
                           <div className={cn(
                             "text-sm font-medium mb-2",
-                            isToday(day) ? "text-blue-500" : darkMode ? "text-gray-300" : "text-gray-700"
+                            isToday(day) ? "text-blue-500" : isDarkMode ? "text-gray-300" : "text-gray-700"
                           )}>
                             {format(day, "d")}
                           </div>
@@ -1616,7 +1875,7 @@ export default function HomePage() {
                               </div>
                             ))}
                             {dayTasks.length > 3 && (
-                              <div className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                              <div className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                                 +{dayTasks.length - 3} more
                               </div>
                             )}
@@ -1633,7 +1892,7 @@ export default function HomePage() {
                     {/* Day headers */}
                     <div className="grid grid-cols-7 gap-1 mb-2">
                       {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                        <div key={day} className={cn("text-center text-xs font-medium py-2", darkMode ? "text-gray-500" : "text-gray-400")}>
+                        <div key={day} className={cn("text-center text-xs font-medium py-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                           {day}
                         </div>
                       ))}
@@ -1661,7 +1920,7 @@ export default function HomePage() {
                           >
                             <div className={cn(
                               "text-xs font-medium mb-1",
-                              isToday(day) ? "text-blue-500" : darkMode ? "text-gray-300" : "text-gray-700"
+                              isToday(day) ? "text-blue-500" : isDarkMode ? "text-gray-300" : "text-gray-700"
                             )}>
                               {format(day, "d")}
                             </div>
@@ -1702,7 +1961,7 @@ export default function HomePage() {
                                     />
                                   ))}
                                   {dayTasks.length > 5 && (
-                                    <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                    <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                                       +{dayTasks.length - 5}
                                     </span>
                                   )}
@@ -1718,7 +1977,7 @@ export default function HomePage() {
               </div>
 
               {/* Drawer Footer */}
-              <div className={cn("p-4 border-t flex gap-3", darkMode ? "border-gray-800" : "border-gray-200")}>
+              <div className={cn("p-4 border-t flex gap-3", isDarkMode ? "border-gray-800" : "border-gray-200")}>
                 <button
                   onClick={() => setSelectedDate(new Date())}
                   className={cn(
@@ -1751,7 +2010,7 @@ export default function HomePage() {
             className={cn(
               "fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[101]",
               "w-[calc(100%-2rem)] max-w-md max-h-[85vh] overflow-y-auto rounded-lg p-4 md:p-6",
-              darkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
             )}
           >
             <div className="flex items-center justify-between mb-4 md:mb-6">
@@ -1791,14 +2050,14 @@ export default function HomePage() {
                         <DropdownMenu.Content
                           className={cn(
                             "min-w-[180px] rounded-lg p-1.5 shadow-lg z-[200]",
-                            darkMode ? "bg-gray-800 border border-gray-700" : "bg-white border border-gray-200"
+                            isDarkMode ? "bg-gray-800 border border-gray-700" : "bg-white border border-gray-200"
                           )}
                           sideOffset={5}
                         >
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              darkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -1815,7 +2074,7 @@ export default function HomePage() {
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              darkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -1832,7 +2091,7 @@ export default function HomePage() {
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              darkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -1849,7 +2108,7 @@ export default function HomePage() {
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              darkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -1863,11 +2122,11 @@ export default function HomePage() {
                             <Calendar className="w-4 h-4 text-purple-500" />
                             Yahoo Calendar
                           </DropdownMenu.Item>
-                          <DropdownMenu.Separator className={cn("h-px my-1", darkMode ? "bg-gray-700" : "bg-gray-200")} />
+                          <DropdownMenu.Separator className={cn("h-px my-1", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              darkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -1891,7 +2150,7 @@ export default function HomePage() {
                 <button
                   className={cn(
                     "p-1.5 md:p-2 rounded-lg",
-                    darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
+                    isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
                   )}
                 >
                   <X className="w-4 h-4 md:w-5 md:h-5" />
@@ -1902,7 +2161,7 @@ export default function HomePage() {
             <div className="space-y-4">
               {/* Title */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", darkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Task Title
                 </label>
                 <input
@@ -1921,7 +2180,7 @@ export default function HomePage() {
 
               {/* Description */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", darkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Description
                 </label>
                 <textarea
@@ -1941,7 +2200,7 @@ export default function HomePage() {
               {/* Date and Time Row */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className={cn("block text-sm font-medium mb-2", darkMode ? "text-gray-300" : "text-gray-700")}>
+                  <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
                     Date
                   </label>
                   <input
@@ -1962,7 +2221,7 @@ export default function HomePage() {
                   />
                 </div>
                 <div>
-                  <label className={cn("block text-sm font-medium mb-2", darkMode ? "text-gray-300" : "text-gray-700")}>
+                  <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
                     Time
                   </label>
                   <input
@@ -1981,7 +2240,7 @@ export default function HomePage() {
 
               {/* Duration */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", darkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Duration (minutes)
                 </label>
                 <select
@@ -2006,7 +2265,7 @@ export default function HomePage() {
 
               {/* Quadrant */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", darkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Quadrant
                 </label>
                 <select
@@ -2028,7 +2287,7 @@ export default function HomePage() {
 
               {/* Priority */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", darkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Priority
                 </label>
                 <select
@@ -2090,7 +2349,7 @@ export default function HomePage() {
         {isLoading ? (
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
             {Array.from({ length: 4 }).map((_, i) => (
-              <QuadrantSkeleton key={i} darkMode={darkMode} />
+              <QuadrantSkeleton key={i} darkMode={isDarkMode} />
             ))}
           </div>
         ) : (
@@ -2104,13 +2363,13 @@ export default function HomePage() {
                 key={quadrant}
                 className={cn(
                   "rounded-lg p-3 md:p-4 min-h-[250px] md:min-h-[300px]",
-                  darkMode ? "bg-gray-900" : "bg-white border border-gray-200"
+                  isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200"
                 )}
               >
                 <div className={cn("flex items-center justify-between mb-3 md:mb-4 p-2 md:p-3 rounded-lg", config.bgColor)}>
                   <div>
                     <h3 className="font-semibold text-base md:text-lg">{config.title}</h3>
-                    <p className={cn("text-xs md:text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                       {config.subtitle}
                     </p>
                   </div>
@@ -2119,7 +2378,7 @@ export default function HomePage() {
                       onClick={() => toggleCompletedVisibility(quadrant)}
                       className={cn(
                         "p-1 md:p-1.5 rounded-lg transition-colors",
-                        darkMode ? "hover:bg-black/20 text-gray-400 hover:text-gray-200" : "hover:bg-white/30 text-gray-600 hover:text-gray-800"
+                        isDarkMode ? "hover:bg-black/20 text-gray-400 hover:text-gray-200" : "hover:bg-white/30 text-gray-600 hover:text-gray-800"
                       )}
                       title={hideCompleted[quadrant] ? "Show completed tasks" : "Hide completed tasks"}
                     >
@@ -2136,7 +2395,7 @@ export default function HomePage() {
                   {quadrantLoading[quadrant] ? (
                     <>
                       {Array.from({ length: Math.max(3, quadrantTasks.length) }).map((_, i) => (
-                        <TaskCardSkeleton key={i} darkMode={darkMode} />
+                        <TaskCardSkeleton key={i} darkMode={isDarkMode} />
                       ))}
                     </>
                   ) : quadrantTasks.length === 0 ? (
@@ -2145,15 +2404,15 @@ export default function HomePage() {
                         onClick={() => openModalForQuadrant(quadrant)}
                         className={cn(
                           "p-3 rounded-full mx-auto mb-3",
-                          darkMode ? "bg-gray-800 hover:bg-gray-700" : "bg-gray-100 hover:bg-gray-200"
+                          isDarkMode ? "bg-gray-800 hover:bg-gray-700" : "bg-gray-100 hover:bg-gray-200"
                         )}
                       >
                         <Plus className="w-6 h-6" />
                       </button>
-                      <p className={cn("text-sm", darkMode ? "text-gray-500" : "text-gray-400")}>
+                      <p className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                         No tasks in this quadrant
                       </p>
-                      <p className={cn("text-xs mt-1", darkMode ? "text-gray-600" : "text-gray-500")}>
+                      <p className={cn("text-xs mt-1", isDarkMode ? "text-gray-600" : "text-gray-500")}>
                         Click the + button to add one
                       </p>
                     </div>
@@ -2177,7 +2436,7 @@ export default function HomePage() {
                                 "mt-0.5 rounded-full transition-opacity",
                                 task.status === "completed" 
                                   ? "text-green-500" 
-                                  : darkMode ? "text-gray-400" : "text-gray-500",
+                                  : isDarkMode ? "text-gray-400" : "text-gray-500",
                                 taskOperationLoading[`toggle-${task._id}`] && "opacity-50 cursor-not-allowed"
                               )}
                             >
@@ -2200,7 +2459,7 @@ export default function HomePage() {
                               {task.description && (
                                 <p className={cn(
                                   "text-xs md:text-sm mt-1",
-                                  darkMode ? "text-gray-400" : "text-gray-600"
+                                  isDarkMode ? "text-gray-400" : "text-gray-600"
                                 )}>
                                   {task.description}
                                 </p>
@@ -2212,7 +2471,7 @@ export default function HomePage() {
                                   </span>
                                 )}
                                 {task.dueDate ? (
-                                  <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                                     {format(new Date(task.dueDate), "MMM dd")} • {format(new Date(task.dueDate), "HH:mm")}
                                   </span>
                                 ) : task.quadrant === "important-not-urgent" ? (
@@ -2230,8 +2489,19 @@ export default function HomePage() {
                                   </button>
                                 ) : null}
                                 {task.duration && (
-                                  <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                                     {task.duration >= 60 ? `${Math.floor(task.duration / 60)}h${task.duration % 60 ? ` ${task.duration % 60}m` : ''}` : `${task.duration}m`}
+                                  </span>
+                                )}
+                                {task.subtaskCount !== undefined && task.subtaskCount > 0 && (
+                                  <span className={cn(
+                                    "text-xs flex items-center gap-1",
+                                    task.subtaskCompletedCount === task.subtaskCount
+                                      ? "text-green-500"
+                                      : isDarkMode ? "text-gray-500" : "text-gray-400"
+                                  )}>
+                                    <CheckCircle2 className="w-3 h-3" />
+                                    {task.subtaskCompletedCount}/{task.subtaskCount}
                                   </span>
                                 )}
                               </div>
@@ -2243,7 +2513,7 @@ export default function HomePage() {
                               disabled={taskOperationLoading[`delete-${task._id}`]}
                               className={cn(
                                 "p-1 md:p-1.5 rounded hover:bg-red-500/20 text-red-400 transition-opacity",
-                                darkMode ? "hover:bg-red-500/20" : "hover:bg-red-50",
+                                isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50",
                                 taskOperationLoading[`delete-${task._id}`] && "opacity-50 cursor-not-allowed"
                               )}
                             >
@@ -2253,7 +2523,7 @@ export default function HomePage() {
                               <DropdownMenu.Trigger asChild>
                                 <button className={cn(
                                   "p-1 md:p-1.5 rounded",
-                                  darkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"
+                                  isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"
                                 )}>
                                   <MoreVertical className="w-3 h-3 md:w-4 md:h-4" />
                                 </button>
@@ -2270,13 +2540,13 @@ export default function HomePage() {
                                 >
                                   <DropdownMenu.Label className={cn(
                                     "px-2 py-1.5 text-xs font-semibold",
-                                    darkMode ? "text-gray-400" : "text-gray-500"
+                                    isDarkMode ? "text-gray-400" : "text-gray-500"
                                   )}>
                                     Move to
                                   </DropdownMenu.Label>
                                   <DropdownMenu.Separator className={cn(
                                     "my-1 h-px",
-                                    darkMode ? "bg-gray-700" : "bg-gray-200"
+                                    isDarkMode ? "bg-gray-700" : "bg-gray-200"
                                   )} />
                                   
                                   {(Object.keys(quadrantConfig) as TaskQuadrant[])
@@ -2320,7 +2590,7 @@ export default function HomePage() {
                   <div className="relative">
                     <Plus className={cn(
                       "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4",
-                      darkMode ? "text-gray-500" : "text-gray-400"
+                      isDarkMode ? "text-gray-500" : "text-gray-400"
                     )} />
                     <input
                       type="text"
@@ -2353,7 +2623,7 @@ export default function HomePage() {
       {/* Floating Action Button */}
       <button
         onClick={() => openModalForQuadrant("urgent-important")}
-        className="fixed bottom-4 right-4 md:bottom-6 md:right-6 p-3 md:p-4 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors"
+        className="fixed bottom-20 right-4 md:bottom-24 md:right-6 p-3 md:p-4 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors z-40"
       >
         <Plus className="w-5 h-5 md:w-6 md:h-6" />
       </button>
@@ -2363,7 +2633,7 @@ export default function HomePage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className={cn(
             "w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto rounded-lg p-4 md:p-6",
-            darkMode ? "bg-gray-900" : "bg-white"
+            isDarkMode ? "bg-gray-900" : "bg-white"
           )}>
             <div className="flex items-center justify-between mb-4 md:mb-6">
               <h2 className="text-lg md:text-xl font-semibold">
@@ -2373,7 +2643,7 @@ export default function HomePage() {
                 onClick={closeModal}
                 className={cn(
                   "p-1.5 md:p-2 rounded-lg",
-                  darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
+                  isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
                 )}
               >
                 <X className="w-4 h-4 md:w-5 md:h-5" />
@@ -2383,7 +2653,7 @@ export default function HomePage() {
             <div className="space-y-3 md:space-y-4">
               <div>
                 <label className={cn("block text-sm font-medium mb-2",
-                  darkMode ? "text-gray-300" : "text-gray-700")}>
+                  isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Task Title
                 </label>
                 <input
@@ -2401,7 +2671,7 @@ export default function HomePage() {
                 {/* Routine Task Suggestions */}
                 {!editingTask && routineTasks.length > 0 && (
                   <div className="mt-2">
-                    <p className={cn("text-xs mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <p className={cn("text-xs mb-1.5", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                       From your routines:
                     </p>
                     <div className="flex flex-wrap gap-1.5">
@@ -2437,7 +2707,7 @@ export default function HomePage() {
 
               <div>
                 <label className={cn("block text-sm font-medium mb-2",
-                  darkMode ? "text-gray-300" : "text-gray-700")}>
+                  isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Description
                 </label>
                 <textarea
@@ -2456,7 +2726,7 @@ export default function HomePage() {
 
               <div>
                 <label className={cn("block text-sm font-medium mb-2",
-                  darkMode ? "text-gray-300" : "text-gray-700")}>
+                  isDarkMode ? "text-gray-300" : "text-gray-700")}>
                   Quadrant
                 </label>
                 <select
@@ -2486,7 +2756,7 @@ export default function HomePage() {
               {formData.quadrant !== "urgent-important" && (
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
-                    darkMode ? "text-gray-300" : "text-gray-700")}>
+                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
                     Priority
                   </label>
                   <select
@@ -2509,7 +2779,7 @@ export default function HomePage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
-                    darkMode ? "text-gray-300" : "text-gray-700")}>
+                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
                     Due Date
                   </label>
                   <div className="relative">
@@ -2530,7 +2800,7 @@ export default function HomePage() {
                         onClick={() => setFormData(prev => ({ ...prev, dueDate: "", dueTime: "12:00" }))}
                         className={cn(
                           "absolute right-8 top-1/2 -translate-y-1/2 p-1 rounded-full transition-colors",
-                          darkMode ? "hover:bg-gray-700 text-gray-400" : "hover:bg-gray-200 text-gray-500"
+                          isDarkMode ? "hover:bg-gray-700 text-gray-400" : "hover:bg-gray-200 text-gray-500"
                         )}
                       >
                         <X className="w-4 h-4" />
@@ -2540,7 +2810,7 @@ export default function HomePage() {
                 </div>
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
-                    darkMode ? "text-gray-300" : "text-gray-700")}>
+                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
                     Time
                   </label>
                   <input
@@ -2562,7 +2832,7 @@ export default function HomePage() {
             {/* Duration */}
             <div>
               <label className={cn("block text-sm font-medium mb-2",
-                darkMode ? "text-gray-300" : "text-gray-700")}>
+                isDarkMode ? "text-gray-300" : "text-gray-700")}>
                 Duration (minutes)
               </label>
               <select
@@ -2587,6 +2857,97 @@ export default function HomePage() {
                 <option value="480">8 hours</option>
               </select>
             </div>
+
+            {/* Subtasks Section - Only show when editing a parent task */}
+            {editingTask && !editingTask.parentTaskId && (
+              <div className={cn("mt-4 pt-4 border-t", isDarkMode ? "border-gray-700" : "border-gray-200")}>
+                <div className="flex items-center justify-between mb-3">
+                  <label className={cn("text-sm font-medium", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    Subtasks
+                  </label>
+                  {(subtasks.length > 0 || (editingTask.subtaskCount ?? 0) > 0) && (
+                    <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                      {subtasks.filter(s => s.status === "completed").length}/{subtasks.length} completed
+                    </span>
+                  )}
+                </div>
+
+                {/* Subtask List */}
+                {subtasksLoading ? (
+                  <div className="text-center py-4">
+                    <span className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>Loading subtasks...</span>
+                  </div>
+                ) : (
+                  <div className="space-y-2 mb-3">
+                    {subtasks.map((subtask) => (
+                      <div
+                        key={subtask._id}
+                        className={cn(
+                          "flex items-center gap-2 p-2 rounded-lg",
+                          isDarkMode ? "bg-gray-800" : "bg-gray-100"
+                        )}
+                      >
+                        <button
+                          onClick={() => handleToggleSubtaskComplete(subtask)}
+                          className={cn(
+                            "rounded-full transition-colors flex-shrink-0",
+                            subtask.status === "completed" ? "text-green-500" : isDarkMode ? "text-gray-400" : "text-gray-500"
+                          )}
+                        >
+                          {subtask.status === "completed" ? (
+                            <CheckCircle2 className="w-4 h-4" />
+                          ) : (
+                            <div className="w-4 h-4 rounded-full border-2 border-current" />
+                          )}
+                        </button>
+                        <span className={cn(
+                          "flex-1 text-sm",
+                          subtask.status === "completed" && "line-through opacity-60"
+                        )}>
+                          {subtask.title}
+                        </span>
+                        <button
+                          onClick={() => handleDeleteSubtask(subtask._id)}
+                          className={cn(
+                            "p-1 rounded transition-colors flex-shrink-0",
+                            isDarkMode ? "hover:bg-red-500/20 text-red-400" : "hover:bg-red-50 text-red-500"
+                          )}
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                {/* Add Subtask Input */}
+                <div className="flex gap-2">
+                  <input
+                    type="text"
+                    placeholder="Add a subtask..."
+                    value={newSubtaskTitle}
+                    onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && newSubtaskTitle.trim()) {
+                        e.preventDefault();
+                        void handleAddSubtask();
+                      }
+                    }}
+                    className={cn(
+                      "flex-1 px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      isDarkMode ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500" : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                    )}
+                  />
+                  <button
+                    onClick={() => void handleAddSubtask()}
+                    disabled={!newSubtaskTitle.trim()}
+                    className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
+                  >
+                    <Plus className="w-4 h-4" />
+                  </button>
+                </div>
+              </div>
+            )}
 
             <div className="flex gap-3 mt-6">
               <button
@@ -2624,32 +2985,32 @@ export default function HomePage() {
               "data-[state=open]:animate-in data-[state=closed]:animate-out",
               "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
               "duration-300 ease-in-out",
-              darkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
             )}
           >
             <div className="flex flex-col h-full">
               {/* Drawer Header */}
-              <div className={cn("flex items-center justify-between p-4 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
+              <div className={cn("flex items-center justify-between p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-blue-600/20">
                     <Repeat className="w-5 h-5 text-blue-500" />
                   </div>
                   <div>
                     <Dialog.Title className="text-lg font-semibold">Routine Tasks</Dialog.Title>
-                    <Dialog.Description className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                    <Dialog.Description className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                       Create templates for recurring tasks
                     </Dialog.Description>
                   </div>
                 </div>
                 <Dialog.Close asChild>
-                  <button className={cn("p-2 rounded-lg", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
+                  <button className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
                     <X className="w-5 h-5" />
                   </button>
                 </Dialog.Close>
               </div>
 
               {/* Routine Task Form */}
-              <div className={cn("p-4 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
+              <div className={cn("p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
                 <div className="space-y-3">
                   <input
                     type="text"
@@ -2658,7 +3019,7 @@ export default function HomePage() {
                     onChange={(e) => setRoutineFormData(prev => ({ ...prev, title: e.target.value }))}
                     className={cn(
                       "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                      darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
                     )}
                   />
                   <textarea
@@ -2668,7 +3029,7 @@ export default function HomePage() {
                     rows={2}
                     className={cn(
                       "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none",
-                      darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
                     )}
                   />
                   <div className="grid grid-cols-2 gap-2">
@@ -2677,7 +3038,7 @@ export default function HomePage() {
                       onChange={(e) => setRoutineFormData(prev => ({ ...prev, quadrant: e.target.value as TaskQuadrant }))}
                       className={cn(
                         "px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
                       )}
                     >
                       <option value="urgent-important">Urgent & Important</option>
@@ -2690,7 +3051,7 @@ export default function HomePage() {
                       onChange={(e) => setRoutineFormData(prev => ({ ...prev, priority: e.target.value as TaskPriority }))}
                       className={cn(
                         "px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
                       )}
                     >
                       <option value="high">High Priority</option>
@@ -2703,7 +3064,7 @@ export default function HomePage() {
                     onChange={(e) => setRoutineFormData(prev => ({ ...prev, duration: e.target.value ? Number(e.target.value) : "" }))}
                     className={cn(
                       "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                      darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
                     )}
                   >
                     <option value="">No default duration</option>
@@ -2720,7 +3081,7 @@ export default function HomePage() {
                         onClick={resetRoutineFormState}
                         className={cn(
                           "flex-1 px-3 py-2 rounded-lg font-medium transition-colors",
-                          darkMode ? "bg-gray-800 hover:bg-gray-700" : "bg-gray-100 hover:bg-gray-200"
+                          isDarkMode ? "bg-gray-800 hover:bg-gray-700" : "bg-gray-100 hover:bg-gray-200"
                         )}
                       >
                         Cancel
@@ -2740,7 +3101,7 @@ export default function HomePage() {
               {/* Routine Tasks List */}
               <div className="flex-1 overflow-y-auto p-4">
                 {routineTasks.length === 0 ? (
-                  <div className={cn("text-center py-12", darkMode ? "text-gray-500" : "text-gray-400")}>
+                  <div className={cn("text-center py-12", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                     <Repeat className="w-12 h-12 mx-auto mb-3 opacity-50" />
                     <p className="text-sm">No routine tasks yet</p>
                     <p className="text-xs mt-1">Create templates for tasks you do regularly</p>
@@ -2752,14 +3113,14 @@ export default function HomePage() {
                         key={routine._id}
                         className={cn(
                           "p-3 rounded-lg border",
-                          darkMode ? "bg-gray-800 border-gray-700" : "bg-gray-50 border-gray-200"
+                          isDarkMode ? "bg-gray-800 border-gray-700" : "bg-gray-50 border-gray-200"
                         )}
                       >
                         <div className="flex items-start justify-between gap-2">
                           <div className="flex-1 min-w-0">
                             <h4 className="font-medium truncate">{routine.title}</h4>
                             {routine.description && (
-                              <p className={cn("text-sm truncate mt-0.5", darkMode ? "text-gray-400" : "text-gray-600")}>
+                              <p className={cn("text-sm truncate mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                                 {routine.description}
                               </p>
                             )}
@@ -2774,7 +3135,7 @@ export default function HomePage() {
                                 {quadrantConfig[routine.quadrant].title}
                               </span>
                               {routine.usageCount !== undefined && routine.usageCount > 0 && (
-                                <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
                                   Used {routine.usageCount}x
                                 </span>
                               )}
@@ -2783,14 +3144,14 @@ export default function HomePage() {
                           <div className="flex items-center gap-1">
                             <button
                               onClick={() => openRoutineTaskForEdit(routine)}
-                              className={cn("p-1.5 rounded", darkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
+                              className={cn("p-1.5 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
                               title="Edit"
                             >
                               <Edit3 className="w-4 h-4" />
                             </button>
                             <button
                               onClick={() => handleDeleteRoutineTask(routine._id)}
-                              className={cn("p-1.5 rounded text-red-400", darkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+                              className={cn("p-1.5 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
                               title="Delete"
                             >
                               <Trash2 className="w-4 h-4" />
@@ -2812,7 +3173,7 @@ export default function HomePage() {
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
           <div className={cn(
             "w-full max-w-2xl mx-4 max-h-[90vh] overflow-y-auto rounded-lg p-4 md:p-6",
-            darkMode ? "bg-gray-900" : "bg-white"
+            isDarkMode ? "bg-gray-900" : "bg-white"
           )}>
             <div className="flex items-center justify-between mb-4 md:mb-6">
               <div className="flex items-center gap-3">
@@ -2827,66 +3188,66 @@ export default function HomePage() {
                 onClick={() => setIsInfoModalOpen(false)}
                 className={cn(
                   "p-1.5 md:p-2 rounded-lg",
-                  darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
+                  isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
                 )}
               >
                 <X className="w-4 h-4 md:w-5 md:h-5" />
               </button>
             </div>
 
-            <p className={cn("text-sm md:text-base mb-6", darkMode ? "text-gray-300" : "text-gray-600")}>
+            <p className={cn("text-sm md:text-base mb-6", isDarkMode ? "text-gray-300" : "text-gray-600")}>
               The Eisenhower Matrix helps you prioritize tasks by urgency and importance, leading to more effective time management.
             </p>
 
             <div className="space-y-4">
               {/* Urgent & Important */}
-              <div className={cn("p-4 rounded-lg border-l-4 border-red-500", darkMode ? "bg-gray-800" : "bg-red-50")}>
+              <div className={cn("p-4 rounded-lg border-l-4 border-red-500", isDarkMode ? "bg-gray-800" : "bg-red-50")}>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-3 h-3 rounded-full bg-red-500" />
                   <h3 className="font-semibold">Urgent & Important - Do First</h3>
                 </div>
-                <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                   These are crises, deadlines, and problems that need immediate action. Handle these tasks right away - they can&apos;t wait. Examples: deadline-driven projects, emergencies, last-minute preparations.
                 </p>
               </div>
 
               {/* Important & Not Urgent */}
-              <div className={cn("p-4 rounded-lg border-l-4 border-yellow-500", darkMode ? "bg-gray-800" : "bg-yellow-50")}>
+              <div className={cn("p-4 rounded-lg border-l-4 border-yellow-500", isDarkMode ? "bg-gray-800" : "bg-yellow-50")}>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-3 h-3 rounded-full bg-yellow-500" />
                   <h3 className="font-semibold">Important & Not Urgent - Schedule</h3>
                 </div>
-                <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                   These tasks are crucial for long-term success but don&apos;t have pressing deadlines. Schedule dedicated time for these - they&apos;re often neglected but most valuable. Examples: planning, relationship building, personal development, exercise.
                 </p>
               </div>
 
               {/* Urgent & Not Important */}
-              <div className={cn("p-4 rounded-lg border-l-4 border-blue-500", darkMode ? "bg-gray-800" : "bg-blue-50")}>
+              <div className={cn("p-4 rounded-lg border-l-4 border-blue-500", isDarkMode ? "bg-gray-800" : "bg-blue-50")}>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-3 h-3 rounded-full bg-blue-500" />
                   <h3 className="font-semibold">Urgent & Not Important - Delegate</h3>
                 </div>
-                <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                   These tasks demand immediate attention but don&apos;t contribute to your major goals. Delegate these when possible or minimize time spent on them. Examples: some meetings, certain emails, minor requests from others.
                 </p>
               </div>
 
               {/* Not Urgent & Not Important */}
-              <div className={cn("p-4 rounded-lg border-l-4 border-green-500", darkMode ? "bg-gray-800" : "bg-green-50")}>
+              <div className={cn("p-4 rounded-lg border-l-4 border-green-500", isDarkMode ? "bg-gray-800" : "bg-green-50")}>
                 <div className="flex items-center gap-2 mb-2">
                   <div className="w-3 h-3 rounded-full bg-green-500" />
                   <h3 className="font-semibold">Not Urgent & Not Important - Eliminate</h3>
                 </div>
-                <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
                   These are time-wasters and trivial activities. Eliminate or dramatically reduce time spent on these tasks. Examples: excessive social media, busy work, time-wasting activities.
                 </p>
               </div>
             </div>
 
-            <div className={cn("mt-6 p-4 rounded-lg", darkMode ? "bg-gray-800" : "bg-gray-100")}>
-              <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
-                <strong className={darkMode ? "text-gray-200" : "text-gray-800"}>Pro tip:</strong> Focus most of your energy on the &quot;Important & Not Urgent&quot; quadrant. These tasks drive long-term success and prevent crises from occurring in the first place.
+            <div className={cn("mt-6 p-4 rounded-lg", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
+              <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                <strong className={isDarkMode ? "text-gray-200" : "text-gray-800"}>Pro tip:</strong> Focus most of your energy on the &quot;Important & Not Urgent&quot; quadrant. These tasks drive long-term success and prevent crises from occurring in the first place.
               </p>
             </div>
 
@@ -2905,15 +3266,15 @@ export default function HomePage() {
       {/* Footer */}
       <footer className={cn(
         "border-t py-6 mt-8",
-        darkMode ? "border-gray-800 bg-gray-900/50" : "border-gray-200 bg-white/50"
+        isDarkMode ? "border-gray-800 bg-gray-900/50" : "border-gray-200 bg-white/50"
       )}>
         <div className="px-4 md:px-6">
           <div className="flex flex-col md:flex-row items-center justify-between gap-4">
-            <p className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-500")}>
+            <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-500")}>
               {new Date().getFullYear()} All rights reserved.
             </p>
             <div className="flex items-center gap-2">
-              <span className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-500")}>
+              <span className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-500")}>
                 Created by
               </span>
               <a
@@ -2940,20 +3301,20 @@ export default function HomePage() {
         toastOptions={{
           duration: 4000,
           style: {
-            background: darkMode ? '#1f2937' : '#fff',
-            color: darkMode ? '#fff' : '#111827',
-            border: darkMode ? '1px solid #374151' : '1px solid #e5e7eb',
+            background: isDarkMode ? '#1f2937' : '#fff',
+            color: isDarkMode ? '#fff' : '#111827',
+            border: isDarkMode ? '1px solid #374151' : '1px solid #e5e7eb',
           },
           success: {
             iconTheme: {
               primary: '#10b981',
-              secondary: darkMode ? '#1f2937' : '#fff',
+              secondary: isDarkMode ? '#1f2937' : '#fff',
             },
           },
           error: {
             iconTheme: {
               primary: '#ef4444',
-              secondary: darkMode ? '#1f2937' : '#fff',
+              secondary: isDarkMode ? '#1f2937' : '#fff',
             },
           },
         }}

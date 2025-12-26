@@ -32,12 +32,12 @@ function formatDateForOutlook(date: Date): string {
 // Generate ICS file content
 export function generateICSFile(event: CalendarEvent): string {
   const now = new Date();
-  const uid = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}@etm`;
+  const uid = `${Date.now()}-${Math.random().toString(36).substr(2, 9)}@eisenQ`;
 
   const icsContent = [
     'BEGIN:VCALENDAR',
     'VERSION:2.0',
-    'PRODID:-//ETM Task Manager//EN',
+    'PRODID:-//EisenQ//EN',
     'CALSCALE:GREGORIAN',
     'METHOD:PUBLISH',
     'BEGIN:VEVENT',
