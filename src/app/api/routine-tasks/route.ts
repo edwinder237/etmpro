@@ -1,6 +1,6 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { routineTasksCollection } from "~/server/db";
-import type { RoutineTask, TaskQuadrant, TaskPriority } from "~/server/db/schema";
+import type { RoutineTask } from "~/server/db/schema";
 import { ObjectId } from "mongodb";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";

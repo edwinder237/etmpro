@@ -1,7 +1,7 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { tasksCollection } from "~/server/db";
 import type { Task, TaskQuadrant, TaskPriority, TaskStatus } from "~/server/db/schema";
-import { ObjectId, type Filter } from "mongodb";
+import { ObjectId } from "mongodb";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 

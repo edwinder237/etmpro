@@ -1,14 +1,17 @@
 import { useCallback, useRef } from "react";
 
+// Type for webkit prefixed AudioContext
+interface WindowWithWebkit extends Window {
+  webkitAudioContext?: typeof AudioContext;
+}
+
 export function useAudioFeedback() {
   const audioContextRef = useRef<AudioContext | null>(null);
 
   const playCompletionSound = useCallback(() => {
     try {
       // Create audio context if it doesn't exist
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
+      audioContextRef.current ??= new (window.AudioContext ?? (window as WindowWithWebkit).webkitAudioContext!)();
 
       const ctx = audioContextRef.current;
       const now = ctx.currentTime;
@@ -42,9 +45,7 @@ export function useAudioFeedback() {
 
   const playUncompleteSound = useCallback(() => {
     try {
-      if (!audioContextRef.current) {
-        audioContextRef.current = new (window.AudioContext || (window as any).webkitAudioContext)();
-      }
+      audioContextRef.current ??= new (window.AudioContext ?? (window as WindowWithWebkit).webkitAudioContext!)();
 
       const ctx = audioContextRef.current;
       const now = ctx.currentTime;

@@ -1577,7 +1577,7 @@ export default function HomePage() {
                               onClick={() => {
                                 setStatsDrawerType(null);
                                 clearSelection();
-                                openTaskForEdit(task);
+                                void openTaskForEdit(task);
                               }}
                               className="flex-1 min-w-0 cursor-pointer"
                             >
@@ -2446,9 +2446,9 @@ export default function HomePage() {
                                 <div className="w-4 h-4 md:w-5 md:h-5 rounded-full border-2 border-current" />
                               )}
                             </button>
-                            <div 
+                            <div
                               className="flex-1 cursor-pointer"
-                              onClick={() => openTaskForEdit(task)}
+                              onClick={() => void openTaskForEdit(task)}
                             >
                               <p className={cn(
                                 "font-medium text-sm md:text-base",
@@ -2476,7 +2476,7 @@ export default function HomePage() {
                                   </span>
                                 ) : task.quadrant === "important-not-urgent" ? (
                                   <button
-                                    onClick={() => openTaskForEdit(task)}
+                                    onClick={() => void openTaskForEdit(task)}
                                     className={cn(
                                       "text-xs px-2 py-1 rounded flex items-center gap-1 transition-colors",
                                       darkMode
