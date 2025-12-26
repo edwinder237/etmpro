@@ -1,6 +1,6 @@
 import { MongoClient, type Db } from "mongodb";
 import { env } from "~/env";
-import type { Task } from "./schema";
+import type { Task, RoutineTask } from "./schema";
 import { collections } from "./schema";
 
 // Global reference to persist connection across serverless function invocations
@@ -28,3 +28,4 @@ const db = globalForDb.db;
 export { db, client };
 
 export const tasksCollection = db.collection<Task>(collections.tasks);
+export const routineTasksCollection = db.collection<RoutineTask>(collections.routineTasks);

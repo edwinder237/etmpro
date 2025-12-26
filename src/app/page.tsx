@@ -24,7 +24,9 @@ import {
   ArrowRight,
   Check,
   Share2,
-  Download
+  Download,
+  Repeat,
+  Edit3
 } from "lucide-react";
 import {
   startOfWeek,
@@ -70,31 +72,44 @@ interface Task {
   updatedAt: string;
 }
 
+interface RoutineTask {
+  _id: string;
+  title: string;
+  description?: string;
+  quadrant: TaskQuadrant;
+  priority: TaskPriority;
+  duration?: number;
+  usageCount?: number;
+  lastUsedAt?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
 const quadrantConfig = {
   "urgent-important": {
-    title: "Urgent & Important",
-    subtitle: "Do First",
+    title: "Do First",
+    subtitle: "Urgent & Important",
     color: "bg-red-600",
     borderColor: "border-red-600",
     bgColor: "bg-red-600/10"
   },
   "important-not-urgent": {
-    title: "Important & Not Urgent",
-    subtitle: "Schedule",
+    title: "Schedule",
+    subtitle: "Important & Not Urgent",
     color: "bg-yellow-600",
     borderColor: "border-yellow-600",
     bgColor: "bg-yellow-600/10"
   },
   "urgent-not-important": {
-    title: "Urgent & Not Important",
-    subtitle: "Delegate",
+    title: "Delegate",
+    subtitle: "Urgent & Not Important",
     color: "bg-blue-600",
     borderColor: "border-blue-600",
     bgColor: "bg-blue-600/10"
   },
   "not-urgent-not-important": {
-    title: "Not Urgent & Not Important",
-    subtitle: "Eliminate",
+    title: "Eliminate",
+    subtitle: "Not Urgent & Not Important",
     color: "bg-green-600",
     borderColor: "border-green-600",
     bgColor: "bg-green-600/10"
@@ -129,13 +144,15 @@ export default function HomePage() {
     priority: TaskPriority;
     dueDate: string;
     dueTime: string;
+    duration: number | "";
   }>({
     title: "",
     description: "",
     quadrant: "urgent-important",
     priority: "medium",
     dueDate: "",
-    dueTime: "12:00"
+    dueTime: "12:00",
+    duration: ""
   });
   const [quickTaskInputs, setQuickTaskInputs] = useState<Record<TaskQuadrant, string>>({
     "urgent-important": "",
@@ -165,6 +182,19 @@ export default function HomePage() {
   const [statsDrawerType, setStatsDrawerType] = useState<StatType>(null);
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
+
+  // Routine tasks state
+  const [routineTasks, setRoutineTasks] = useState<RoutineTask[]>([]);
+  const [isRoutineDrawerOpen, setIsRoutineDrawerOpen] = useState(false);
+  const [editingRoutineTask, setEditingRoutineTask] = useState<RoutineTask | null>(null);
+  const [routineTaskLoading, setRoutineTaskLoading] = useState(false);
+  const [routineFormData, setRoutineFormData] = useState({
+    title: "",
+    description: "",
+    quadrant: "urgent-important" as TaskQuadrant,
+    priority: "medium" as TaskPriority,
+    duration: "" as number | "",
+  });
 
   // Helper to extract time from dueDate
   const getTimeFromDate = (dateString: string) => {
@@ -385,11 +415,12 @@ export default function HomePage() {
 
   useEffect(() => {
     void fetchTasks();
+    void fetchRoutineTasks();
   }, []);
 
   // Lock body scroll when any modal/drawer is open
   useEffect(() => {
-    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || statsDrawerType !== null;
+    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || statsDrawerType !== null || isRoutineDrawerOpen;
 
     if (isAnyModalOpen) {
       document.body.style.overflow = 'hidden';
@@ -400,7 +431,7 @@ export default function HomePage() {
     return () => {
       document.body.style.overflow = '';
     };
-  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, statsDrawerType]);
+  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, statsDrawerType, isRoutineDrawerOpen]);
 
   const fetchTasks = async () => {
     try {
@@ -416,6 +447,18 @@ export default function HomePage() {
       toast.error("Error loading tasks");
     } finally {
       setIsLoading(false);
+    }
+  };
+
+  const fetchRoutineTasks = async () => {
+    try {
+      const response = await fetch("/api/routine-tasks");
+      if (response.ok) {
+        const data = await response.json() as RoutineTask[];
+        setRoutineTasks(data);
+      }
+    } catch {
+      // Silently fail - routine tasks are optional
     }
   };
 
@@ -447,10 +490,11 @@ export default function HomePage() {
           description: formData.description,
           quadrant: formData.quadrant,
           priority: formData.quadrant === "urgent-important" ? "high" : formData.priority,
-          dueDate: dueDateValue
+          dueDate: dueDateValue,
+          duration: formData.duration || undefined
         })
       });
-      
+
       if (response.ok) {
         const newTask = await response.json() as Task;
         setTasks(prev => [...prev, newTask]);
@@ -539,10 +583,11 @@ export default function HomePage() {
           description: formData.description,
           quadrant: formData.quadrant,
           priority: formData.quadrant === "urgent-important" ? "high" : formData.priority,
-          dueDate: dueDateValue
+          dueDate: dueDateValue,
+          duration: formData.duration || null
         })
       });
-      
+
       if (response.ok) {
         const updatedTask = await response.json() as Task;
         setTasks(prev => prev.map(task => 
@@ -669,6 +714,144 @@ export default function HomePage() {
     }
   };
 
+  // Routine task handlers
+  const handleAddRoutineTask = async () => {
+    if (!routineFormData.title.trim()) return;
+
+    try {
+      setRoutineTaskLoading(true);
+      const response = await fetch("/api/routine-tasks", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: routineFormData.title,
+          description: routineFormData.description,
+          quadrant: routineFormData.quadrant,
+          priority: routineFormData.priority,
+          duration: routineFormData.duration || undefined
+        })
+      });
+
+      if (response.ok) {
+        const newRoutineTask = await response.json() as RoutineTask;
+        setRoutineTasks(prev => [newRoutineTask, ...prev]);
+        resetRoutineFormState();
+        toast.success("Routine task created!");
+      } else {
+        toast.error("Failed to create routine task");
+      }
+    } catch {
+      toast.error("Error creating routine task");
+    } finally {
+      setRoutineTaskLoading(false);
+    }
+  };
+
+  const handleUpdateRoutineTask = async () => {
+    if (!editingRoutineTask || !routineFormData.title.trim()) return;
+
+    try {
+      setRoutineTaskLoading(true);
+      const response = await fetch("/api/routine-tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _id: editingRoutineTask._id,
+          title: routineFormData.title,
+          description: routineFormData.description,
+          quadrant: routineFormData.quadrant,
+          priority: routineFormData.priority,
+          duration: routineFormData.duration || null
+        })
+      });
+
+      if (response.ok) {
+        const updatedRoutineTask = await response.json() as RoutineTask;
+        setRoutineTasks(prev => prev.map(rt =>
+          rt._id === updatedRoutineTask._id ? updatedRoutineTask : rt
+        ));
+        resetRoutineFormState();
+        toast.success("Routine task updated!");
+      } else {
+        toast.error("Failed to update routine task");
+      }
+    } catch {
+      toast.error("Error updating routine task");
+    } finally {
+      setRoutineTaskLoading(false);
+    }
+  };
+
+  const handleDeleteRoutineTask = async (id: string) => {
+    try {
+      setRoutineTaskLoading(true);
+      const response = await fetch(`/api/routine-tasks?id=${id}`, {
+        method: "DELETE"
+      });
+
+      if (response.ok) {
+        setRoutineTasks(prev => prev.filter(rt => rt._id !== id));
+        toast.success("Routine task deleted!");
+      } else {
+        toast.error("Failed to delete routine task");
+      }
+    } catch {
+      toast.error("Error deleting routine task");
+    } finally {
+      setRoutineTaskLoading(false);
+    }
+  };
+
+  const incrementRoutineTaskUsage = async (id: string) => {
+    try {
+      await fetch(`/api/routine-tasks?id=${id}`, {
+        method: "PATCH"
+      });
+      // Update local state
+      setRoutineTasks(prev => prev.map(rt =>
+        rt._id === id
+          ? { ...rt, usageCount: (rt.usageCount ?? 0) + 1, lastUsedAt: new Date().toISOString() }
+          : rt
+      ));
+    } catch {
+      // Silently fail - usage tracking is not critical
+    }
+  };
+
+  const resetRoutineFormState = () => {
+    setRoutineFormData({
+      title: "",
+      description: "",
+      quadrant: "urgent-important",
+      priority: "medium",
+      duration: ""
+    });
+    setEditingRoutineTask(null);
+  };
+
+  const openRoutineTaskForEdit = (routineTask: RoutineTask) => {
+    setEditingRoutineTask(routineTask);
+    setRoutineFormData({
+      title: routineTask.title,
+      description: routineTask.description ?? "",
+      quadrant: routineTask.quadrant,
+      priority: routineTask.priority,
+      duration: routineTask.duration ?? ""
+    });
+  };
+
+  const applyRoutineTaskToForm = (routineTask: RoutineTask) => {
+    setFormData(prev => ({
+      ...prev,
+      title: routineTask.title,
+      description: routineTask.description ?? "",
+      quadrant: routineTask.quadrant,
+      priority: routineTask.priority,
+      duration: routineTask.duration ?? ""
+    }));
+    void incrementRoutineTaskUsage(routineTask._id);
+  };
+
   const resetFormState = () => {
     setFormData({
       title: "",
@@ -676,7 +859,8 @@ export default function HomePage() {
       quadrant: "urgent-important",
       priority: "medium",
       dueDate: "",
-      dueTime: "12:00"
+      dueTime: "12:00",
+      duration: ""
     });
     setEditingTask(null);
   };
@@ -694,7 +878,8 @@ export default function HomePage() {
       quadrant,
       priority: quadrant === "urgent-important" ? "high" : "medium",
       dueDate: "",
-      dueTime: "12:00"
+      dueTime: "12:00",
+      duration: ""
     });
     setIsModalOpen(true);
   };
@@ -708,7 +893,8 @@ export default function HomePage() {
       quadrant: task.quadrant,
       priority: task.priority,
       dueDate: taskDate ? format(taskDate, "yyyy-MM-dd") : "",
-      dueTime: taskDate ? format(taskDate, "HH:mm") : "12:00"
+      dueTime: taskDate ? format(taskDate, "HH:mm") : "12:00",
+      duration: task.duration ?? ""
     });
     setIsModalOpen(true);
   };
@@ -878,6 +1064,14 @@ export default function HomePage() {
                 title="Task Planning Calendar"
               >
                 <CalendarDays className="w-5 h-5" />
+              </button>
+
+              <button
+                onClick={() => setIsRoutineDrawerOpen(true)}
+                className={cn("p-2 rounded-lg", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+                title="Routine Tasks"
+              >
+                <Repeat className="w-5 h-5" />
               </button>
 
               <button
@@ -2035,6 +2229,11 @@ export default function HomePage() {
                                     Schedule
                                   </button>
                                 ) : null}
+                                {task.duration && (
+                                  <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                    {task.duration >= 60 ? `${Math.floor(task.duration / 60)}h${task.duration % 60 ? ` ${task.duration % 60}m` : ''}` : `${task.duration}m`}
+                                  </span>
+                                )}
                               </div>
                             </div>
                           </div>
@@ -2183,7 +2382,7 @@ export default function HomePage() {
 
             <div className="space-y-3 md:space-y-4">
               <div>
-                <label className={cn("block text-sm font-medium mb-2", 
+                <label className={cn("block text-sm font-medium mb-2",
                   darkMode ? "text-gray-300" : "text-gray-700")}>
                   Task Title
                 </label>
@@ -2194,11 +2393,46 @@ export default function HomePage() {
                   placeholder="Enter task title..."
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                    darkMode 
+                    darkMode
                       ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500"
                       : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
                   )}
                 />
+                {/* Routine Task Suggestions */}
+                {!editingTask && routineTasks.length > 0 && (
+                  <div className="mt-2">
+                    <p className={cn("text-xs mb-1.5", darkMode ? "text-gray-500" : "text-gray-400")}>
+                      From your routines:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {routineTasks
+                        .filter(rt =>
+                          !formData.title ||
+                          rt.title.toLowerCase().includes(formData.title.toLowerCase())
+                        )
+                        .slice(0, 5)
+                        .map((routine) => (
+                          <button
+                            key={routine._id}
+                            type="button"
+                            onClick={() => applyRoutineTaskToForm(routine)}
+                            className={cn(
+                              "px-2 py-1 text-xs rounded-md border transition-colors",
+                              darkMode
+                                ? "border-gray-700 hover:bg-gray-800 hover:border-gray-600"
+                                : "border-gray-200 hover:bg-gray-50 hover:border-gray-300",
+                              routine.quadrant === "urgent-important" && "text-red-400",
+                              routine.quadrant === "important-not-urgent" && "text-yellow-400",
+                              routine.quadrant === "urgent-not-important" && "text-blue-400",
+                              routine.quadrant === "not-urgent-not-important" && "text-green-400"
+                            )}
+                          >
+                            {routine.title}
+                          </button>
+                        ))}
+                    </div>
+                  </div>
+                )}
               </div>
 
               <div>
@@ -2325,6 +2559,35 @@ export default function HomePage() {
               </div>
             </div>
 
+            {/* Duration */}
+            <div>
+              <label className={cn("block text-sm font-medium mb-2",
+                darkMode ? "text-gray-300" : "text-gray-700")}>
+                Duration (minutes)
+              </label>
+              <select
+                value={formData.duration}
+                onChange={(e) => setFormData(prev => ({ ...prev, duration: e.target.value ? Number(e.target.value) : "" }))}
+                className={cn(
+                  "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                  darkMode
+                    ? "bg-gray-800 border-gray-700 text-white"
+                    : "bg-white border-gray-300 text-gray-900"
+                )}
+              >
+                <option value="">No duration</option>
+                <option value="15">15 minutes</option>
+                <option value="30">30 minutes</option>
+                <option value="45">45 minutes</option>
+                <option value="60">1 hour</option>
+                <option value="90">1.5 hours</option>
+                <option value="120">2 hours</option>
+                <option value="180">3 hours</option>
+                <option value="240">4 hours</option>
+                <option value="480">8 hours</option>
+              </select>
+            </div>
+
             <div className="flex gap-3 mt-6">
               <button
                 onClick={closeModal}
@@ -2350,6 +2613,199 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Routine Tasks Drawer */}
+      <Dialog.Root open={isRoutineDrawerOpen} onOpenChange={setIsRoutineDrawerOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
+          <Dialog.Content
+            className={cn(
+              "fixed right-0 top-0 h-full w-full max-w-md z-50 shadow-xl",
+              "data-[state=open]:animate-in data-[state=closed]:animate-out",
+              "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
+              "duration-300 ease-in-out",
+              darkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+            )}
+          >
+            <div className="flex flex-col h-full">
+              {/* Drawer Header */}
+              <div className={cn("flex items-center justify-between p-4 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
+                <div className="flex items-center gap-3">
+                  <div className="p-2 rounded-lg bg-blue-600/20">
+                    <Repeat className="w-5 h-5 text-blue-500" />
+                  </div>
+                  <div>
+                    <Dialog.Title className="text-lg font-semibold">Routine Tasks</Dialog.Title>
+                    <Dialog.Description className={cn("text-sm", darkMode ? "text-gray-400" : "text-gray-600")}>
+                      Create templates for recurring tasks
+                    </Dialog.Description>
+                  </div>
+                </div>
+                <Dialog.Close asChild>
+                  <button className={cn("p-2 rounded-lg", darkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
+                    <X className="w-5 h-5" />
+                  </button>
+                </Dialog.Close>
+              </div>
+
+              {/* Routine Task Form */}
+              <div className={cn("p-4 border-b", darkMode ? "border-gray-800" : "border-gray-200")}>
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    placeholder="Routine task title..."
+                    value={routineFormData.title}
+                    onChange={(e) => setRoutineFormData(prev => ({ ...prev, title: e.target.value }))}
+                    className={cn(
+                      "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                    )}
+                  />
+                  <textarea
+                    placeholder="Description (optional)..."
+                    value={routineFormData.description}
+                    onChange={(e) => setRoutineFormData(prev => ({ ...prev, description: e.target.value }))}
+                    rows={2}
+                    className={cn(
+                      "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none",
+                      darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                    )}
+                  />
+                  <div className="grid grid-cols-2 gap-2">
+                    <select
+                      value={routineFormData.quadrant}
+                      onChange={(e) => setRoutineFormData(prev => ({ ...prev, quadrant: e.target.value as TaskQuadrant }))}
+                      className={cn(
+                        "px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                        darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      )}
+                    >
+                      <option value="urgent-important">Urgent & Important</option>
+                      <option value="important-not-urgent">Important & Not Urgent</option>
+                      <option value="urgent-not-important">Urgent & Not Important</option>
+                      <option value="not-urgent-not-important">Not Urgent & Not Important</option>
+                    </select>
+                    <select
+                      value={routineFormData.priority}
+                      onChange={(e) => setRoutineFormData(prev => ({ ...prev, priority: e.target.value as TaskPriority }))}
+                      className={cn(
+                        "px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                        darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      )}
+                    >
+                      <option value="high">High Priority</option>
+                      <option value="medium">Medium Priority</option>
+                      <option value="low">Low Priority</option>
+                    </select>
+                  </div>
+                  <select
+                    value={routineFormData.duration}
+                    onChange={(e) => setRoutineFormData(prev => ({ ...prev, duration: e.target.value ? Number(e.target.value) : "" }))}
+                    className={cn(
+                      "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      darkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                    )}
+                  >
+                    <option value="">No default duration</option>
+                    <option value="15">15 minutes</option>
+                    <option value="30">30 minutes</option>
+                    <option value="45">45 minutes</option>
+                    <option value="60">1 hour</option>
+                    <option value="90">1.5 hours</option>
+                    <option value="120">2 hours</option>
+                  </select>
+                  <div className="flex gap-2">
+                    {editingRoutineTask && (
+                      <button
+                        onClick={resetRoutineFormState}
+                        className={cn(
+                          "flex-1 px-3 py-2 rounded-lg font-medium transition-colors",
+                          darkMode ? "bg-gray-800 hover:bg-gray-700" : "bg-gray-100 hover:bg-gray-200"
+                        )}
+                      >
+                        Cancel
+                      </button>
+                    )}
+                    <button
+                      onClick={editingRoutineTask ? handleUpdateRoutineTask : handleAddRoutineTask}
+                      disabled={!routineFormData.title.trim() || routineTaskLoading}
+                      className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
+                    >
+                      {routineTaskLoading ? "Saving..." : editingRoutineTask ? "Update" : "Add Routine"}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              {/* Routine Tasks List */}
+              <div className="flex-1 overflow-y-auto p-4">
+                {routineTasks.length === 0 ? (
+                  <div className={cn("text-center py-12", darkMode ? "text-gray-500" : "text-gray-400")}>
+                    <Repeat className="w-12 h-12 mx-auto mb-3 opacity-50" />
+                    <p className="text-sm">No routine tasks yet</p>
+                    <p className="text-xs mt-1">Create templates for tasks you do regularly</p>
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {routineTasks.map((routine) => (
+                      <div
+                        key={routine._id}
+                        className={cn(
+                          "p-3 rounded-lg border",
+                          darkMode ? "bg-gray-800 border-gray-700" : "bg-gray-50 border-gray-200"
+                        )}
+                      >
+                        <div className="flex items-start justify-between gap-2">
+                          <div className="flex-1 min-w-0">
+                            <h4 className="font-medium truncate">{routine.title}</h4>
+                            {routine.description && (
+                              <p className={cn("text-sm truncate mt-0.5", darkMode ? "text-gray-400" : "text-gray-600")}>
+                                {routine.description}
+                              </p>
+                            )}
+                            <div className="flex items-center gap-2 mt-2">
+                              <span className={cn(
+                                "text-xs px-2 py-0.5 rounded",
+                                routine.quadrant === "urgent-important" && "bg-red-500/20 text-red-400",
+                                routine.quadrant === "important-not-urgent" && "bg-yellow-500/20 text-yellow-400",
+                                routine.quadrant === "urgent-not-important" && "bg-blue-500/20 text-blue-400",
+                                routine.quadrant === "not-urgent-not-important" && "bg-green-500/20 text-green-400"
+                              )}>
+                                {quadrantConfig[routine.quadrant].title}
+                              </span>
+                              {routine.usageCount !== undefined && routine.usageCount > 0 && (
+                                <span className={cn("text-xs", darkMode ? "text-gray-500" : "text-gray-400")}>
+                                  Used {routine.usageCount}x
+                                </span>
+                              )}
+                            </div>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <button
+                              onClick={() => openRoutineTaskForEdit(routine)}
+                              className={cn("p-1.5 rounded", darkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
+                              title="Edit"
+                            >
+                              <Edit3 className="w-4 h-4" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteRoutineTask(routine._id)}
+                              className={cn("p-1.5 rounded text-red-400", darkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+                              title="Delete"
+                            >
+                              <Trash2 className="w-4 h-4" />
+                            </button>
+                          </div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Eisenhower Matrix Info Modal */}
       {isInfoModalOpen && (

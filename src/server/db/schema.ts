@@ -19,6 +19,21 @@ export interface Task {
   userId?: string;
 }
 
+export interface RoutineTask {
+  _id?: ObjectId;
+  title: string;
+  description?: string;
+  quadrant: TaskQuadrant;
+  priority: TaskPriority;
+  duration?: number;
+  userId: string;
+  usageCount?: number;
+  lastUsedAt?: Date;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export const collections = {
   tasks: "tasks",
+  routineTasks: "routineTasks",
 } as const;
