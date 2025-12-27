@@ -52,9 +52,10 @@ export async function GET(request: NextRequest) {
     const status = searchParams.get("status");
 
     // Build match filter for parent tasks only (no parentTaskId)
+    // In MongoDB, { field: null } matches docs where field is null OR doesn't exist
     const matchFilter: Record<string, unknown> = {
       userId,
-      parentTaskId: { $exists: false }  // Only fetch parent tasks
+      parentTaskId: null
     };
 
     if (search) {
@@ -82,12 +83,16 @@ export async function GET(request: NextRequest) {
       {
         $lookup: {
           from: "tasks",
-          let: { parentId: "$_id" },
+          let: { parentId: "$_id", parentUserId: "$userId" },
           pipeline: [
             {
               $match: {
-                $expr: { $eq: ["$parentTaskId", "$$parentId"] },
-                userId: userId
+                $expr: {
+                  $and: [
+                    { $eq: ["$parentTaskId", "$$parentId"] },
+                    { $eq: ["$userId", "$$parentUserId"] }
+                  ]
+                }
               }
             },
             { $project: { status: 1 } }
