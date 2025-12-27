@@ -5,10 +5,24 @@ interface WindowWithWebkit extends Window {
   webkitAudioContext?: typeof AudioContext;
 }
 
+// Helper to trigger vibration on supported devices
+function vibrate(pattern: number | number[]): void {
+  if (typeof navigator !== "undefined" && "vibrate" in navigator) {
+    try {
+      navigator.vibrate(pattern);
+    } catch {
+      // Silently fail if vibration is not supported or blocked
+    }
+  }
+}
+
 export function useAudioFeedback() {
   const audioContextRef = useRef<AudioContext | null>(null);
 
   const playCompletionSound = useCallback(() => {
+    // Vibrate on mobile: short double pulse for completion
+    vibrate([50, 30, 50]);
+
     try {
       // Create audio context if it doesn't exist
       audioContextRef.current ??= new (window.AudioContext ?? (window as WindowWithWebkit).webkitAudioContext!)();
@@ -72,8 +86,14 @@ export function useAudioFeedback() {
     }
   }, []);
 
+  const vibrateOnDelete = useCallback(() => {
+    // Longer single pulse for delete action
+    vibrate(100);
+  }, []);
+
   return {
     playCompletionSound,
     playUncompleteSound,
+    vibrateOnDelete,
   };
 }

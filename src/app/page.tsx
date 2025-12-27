@@ -129,7 +129,7 @@ export default function HomePage() {
   const [darkMode, setDarkMode] = useState<boolean | null>(null);
   // Use dark mode as default during SSR/initial render to prevent flash
   const isDarkMode = darkMode ?? true;
-  const { playCompletionSound, playUncompleteSound } = useAudioFeedback();
+  const { playCompletionSound, playUncompleteSound, vibrateOnDelete } = useAudioFeedback();
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [taskOperationLoading, setTaskOperationLoading] = useState<Record<string, boolean>>({});
@@ -670,6 +670,7 @@ export default function HomePage() {
       
       if (response.ok) {
         setTasks(prev => prev.filter(task => task._id !== id));
+        vibrateOnDelete();
         toast.success("Task deleted successfully!");
       } else {
         toast.error("Failed to delete task");

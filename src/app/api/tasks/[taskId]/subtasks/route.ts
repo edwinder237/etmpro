@@ -21,10 +21,11 @@ export async function GET(
     }
 
     // Verify parent task exists and belongs to user
+    // Use { field: null } to match docs where field is null OR doesn't exist
     const parentTask = await tasksCollection.findOne({
       _id: new ObjectId(taskId),
       userId,
-      parentTaskId: { $exists: false }  // Must be a parent task (not a subtask)
+      parentTaskId: null as unknown as undefined  // Must be a parent task (not a subtask)
     });
 
     if (!parentTask) {

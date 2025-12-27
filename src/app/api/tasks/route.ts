@@ -152,10 +152,11 @@ export async function POST(request: NextRequest) {
       }
 
       // Verify parent task exists, belongs to user, and is not itself a subtask
+      // Use { field: null } to match docs where field is null OR doesn't exist
       const parentTask = await tasksCollection.findOne({
         _id: new ObjectId(body.parentTaskId),
         userId,
-        parentTaskId: { $exists: false }  // Parent must not be a subtask
+        parentTaskId: null as unknown as undefined  // Parent must not be a subtask
       });
 
       if (!parentTask) {
