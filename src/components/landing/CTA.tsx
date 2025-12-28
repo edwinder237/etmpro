@@ -1,11 +1,7 @@
 import Link from "next/link";
 import { ArrowRight, CheckCircle } from "lucide-react";
 
-interface CTAProps {
-  isSignedIn: boolean;
-}
-
-export function CTA({ isSignedIn }: CTAProps) {
+export function CTA() {
   const highlights = [
     "Free to use",
     "No credit card required",
@@ -41,23 +37,13 @@ export function CTA({ isSignedIn }: CTAProps) {
             </div>
 
             {/* CTA Button */}
-            {isSignedIn ? (
-              <Link
-                href="/dashboard"
-                className="inline-flex items-center gap-2 px-10 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 shadow-lg shadow-blue-600/25"
-              >
-                Go to Dashboard
-                <ArrowRight className="w-5 h-5" />
-              </Link>
-            ) : (
-              <Link
-                href="/sign-up"
-                className="inline-flex items-center gap-2 px-10 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 shadow-lg shadow-blue-600/25"
-              >
-                Get Started for Free
-                <ArrowRight className="w-5 h-5" />
-              </Link>
-            )}
+            <Link
+              href="/sign-up"
+              className="inline-flex items-center gap-2 px-10 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 shadow-lg shadow-blue-600/25"
+            >
+              Get Started for Free
+              <ArrowRight className="w-5 h-5" />
+            </Link>
           </div>
         </div>
       </div>

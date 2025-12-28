@@ -1,17 +1,23 @@
 import { auth } from "@clerk/nextjs/server";
-import { Hero, Features, HowItWorks, Benefits, CTA, Footer } from "~/components/landing";
+import { redirect } from "next/navigation";
+import { Hero, Features, HowItWorks, Benefits, Contact, CTA, Footer } from "~/components/landing";
 
 export default async function LandingPage() {
   const { userId } = await auth();
-  const isSignedIn = !!userId;
+
+  // Redirect logged-in users directly to the dashboard
+  if (userId) {
+    redirect("/dashboard");
+  }
 
   return (
     <main className="min-h-screen bg-gray-950">
-      <Hero isSignedIn={isSignedIn} />
+      <Hero />
       <Features />
       <HowItWorks />
       <Benefits />
-      <CTA isSignedIn={isSignedIn} />
+      <Contact />
+      <CTA />
       <Footer />
     </main>
   );

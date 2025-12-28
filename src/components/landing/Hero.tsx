@@ -2,11 +2,7 @@ import Link from "next/link";
 import { EisenqLogo } from "~/components/icons/EisenqLogo";
 import { ArrowRight } from "lucide-react";
 
-interface HeroProps {
-  isSignedIn: boolean;
-}
-
-export function Hero({ isSignedIn }: HeroProps) {
+export function Hero() {
   return (
     <section className="relative min-h-screen flex flex-col">
       {/* Navigation */}
@@ -17,30 +13,18 @@ export function Hero({ isSignedIn }: HeroProps) {
           <span className="text-gray-400 text-sm hidden sm:inline">Decide & Do</span>
         </div>
         <div className="flex items-center gap-3">
-          {isSignedIn ? (
-            <Link
-              href="/dashboard"
-              className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors flex items-center gap-2"
-            >
-              Go to Dashboard
-              <ArrowRight className="w-4 h-4" />
-            </Link>
-          ) : (
-            <>
-              <Link
-                href="/sign-in"
-                className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
-              >
-                Sign In
-              </Link>
-              <Link
-                href="/sign-up"
-                className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
-              >
-                Get Started
-              </Link>
-            </>
-          )}
+          <Link
+            href="/sign-in"
+            className="px-4 py-2 text-gray-300 hover:text-white transition-colors"
+          >
+            Sign In
+          </Link>
+          <Link
+            href="/sign-up"
+            className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg font-medium transition-colors"
+          >
+            Get Started
+          </Link>
         </div>
       </nav>
 
@@ -67,31 +51,19 @@ export function Hero({ isSignedIn }: HeroProps) {
 
           {/* CTA Buttons */}
           <div className="flex flex-col sm:flex-row items-center justify-center gap-4 mb-16">
-            {isSignedIn ? (
-              <Link
-                href="/dashboard"
-                className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 flex items-center gap-2 shadow-lg shadow-blue-600/25"
-              >
-                Open Dashboard
-                <ArrowRight className="w-5 h-5" />
-              </Link>
-            ) : (
-              <>
-                <Link
-                  href="/sign-up"
-                  className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 flex items-center gap-2 shadow-lg shadow-blue-600/25"
-                >
-                  Start for Free
-                  <ArrowRight className="w-5 h-5" />
-                </Link>
-                <Link
-                  href="/sign-in"
-                  className="px-8 py-4 bg-gray-800 hover:bg-gray-700 text-white rounded-xl font-semibold text-lg transition-colors border border-gray-700"
-                >
-                  Sign In
-                </Link>
-              </>
-            )}
+            <Link
+              href="/sign-up"
+              className="px-8 py-4 bg-blue-600 hover:bg-blue-700 text-white rounded-xl font-semibold text-lg transition-all hover:scale-105 flex items-center gap-2 shadow-lg shadow-blue-600/25"
+            >
+              Start for Free
+              <ArrowRight className="w-5 h-5" />
+            </Link>
+            <Link
+              href="/sign-in"
+              className="px-8 py-4 bg-gray-800 hover:bg-gray-700 text-white rounded-xl font-semibold text-lg transition-colors border border-gray-700"
+            >
+              Sign In
+            </Link>
           </div>
 
           {/* Matrix Preview */}
