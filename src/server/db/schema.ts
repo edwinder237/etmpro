@@ -34,7 +34,22 @@ export interface RoutineTask {
   updatedAt: Date;
 }
 
+export type ChecklistFrequency = "daily" | "weekly";
+
+export interface ChecklistItem {
+  _id?: ObjectId;
+  title: string;
+  frequency: ChecklistFrequency;
+  daysOfWeek?: number[];       // 0=Sunday..6=Saturday, only for weekly
+  completedDates: string[];    // Array of "YYYY-MM-DD" strings
+  sortOrder: number;
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export const collections = {
   tasks: "tasks",
   routineTasks: "routineTasks",
+  checklistItems: "checklistItems",
 } as const;

@@ -26,7 +26,10 @@ import {
   Share2,
   Download,
   Repeat,
-  Edit3
+  Edit3,
+  ChevronDown,
+  ChevronUp,
+  Circle
 } from "lucide-react";
 import {
   startOfWeek,
@@ -89,6 +92,21 @@ interface RoutineTask {
   createdAt: string;
   updatedAt: string;
 }
+
+type ChecklistFrequency = "daily" | "weekly";
+
+interface ChecklistItem {
+  _id: string;
+  title: string;
+  frequency: ChecklistFrequency;
+  daysOfWeek?: number[];
+  completedDates: string[];
+  sortOrder: number;
+  createdAt: string;
+  updatedAt: string;
+}
+
+const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
 const quadrantConfig = {
   "urgent-important": {
@@ -202,6 +220,18 @@ export default function HomePage() {
     quadrant: "urgent-important" as TaskQuadrant,
     priority: "medium" as TaskPriority,
     duration: "" as number | "",
+  });
+
+  // Checklist state
+  const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
+  const [checklistLoading, setChecklistLoading] = useState(false);
+  const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(false);
+  const [showChecklistForm, setShowChecklistForm] = useState(false);
+  const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null);
+  const [checklistFormData, setChecklistFormData] = useState({
+    title: "",
+    frequency: "daily" as ChecklistFrequency,
+    daysOfWeek: [] as number[],
   });
 
   // Subtask state (for edit modal)
@@ -429,6 +459,7 @@ export default function HomePage() {
   useEffect(() => {
     void fetchTasks();
     void fetchRoutineTasks();
+    void fetchChecklistItems();
   }, []);
 
   // Initialize dark mode from localStorage or system preference
@@ -450,6 +481,14 @@ export default function HomePage() {
       };
       mediaQuery.addEventListener("change", handler);
       return () => mediaQuery.removeEventListener("change", handler);
+    }
+  }, []);
+
+  // Initialize checklist collapsed state from localStorage
+  useEffect(() => {
+    const stored = localStorage.getItem("eisenq-checklist-collapsed");
+    if (stored !== null) {
+      setIsChecklistCollapsed(stored === "true");
     }
   }, []);
 
@@ -495,6 +534,160 @@ export default function HomePage() {
     } catch {
       // Silently fail - routine tasks are optional
     }
+  };
+
+  // Checklist functions
+  const fetchChecklistItems = async () => {
+    try {
+      const response = await fetch("/api/checklist");
+      if (response.ok) {
+        const data = await response.json() as ChecklistItem[];
+        setChecklistItems(data);
+      }
+    } catch {
+      // Silently fail
+    }
+  };
+
+  const todayStr = format(new Date(), "yyyy-MM-dd");
+  const todayDayOfWeek = new Date().getDay();
+
+  const isChecklistItemVisibleToday = (item: ChecklistItem) => {
+    if (item.frequency === "daily") return true;
+    return item.daysOfWeek?.includes(todayDayOfWeek) ?? false;
+  };
+
+  const isChecklistItemCompletedToday = (item: ChecklistItem) => {
+    return item.completedDates.includes(todayStr);
+  };
+
+  const todaysChecklistItems = checklistItems.filter(isChecklistItemVisibleToday);
+  const completedCount = todaysChecklistItems.filter(isChecklistItemCompletedToday).length;
+
+  const handleToggleChecklistItem = async (id: string) => {
+    // Optimistic update
+    setChecklistItems(prev =>
+      prev.map(item => {
+        if (item._id !== id) return item;
+        const isCompleted = item.completedDates.includes(todayStr);
+        return {
+          ...item,
+          completedDates: isCompleted
+            ? item.completedDates.filter(d => d !== todayStr)
+            : [...item.completedDates, todayStr],
+        };
+      })
+    );
+
+    const item = checklistItems.find(i => i._id === id);
+    if (item) {
+      const wasCompleted = item.completedDates.includes(todayStr);
+      if (wasCompleted) {
+        playUncompleteSound();
+      } else {
+        playCompletionSound();
+      }
+    }
+
+    try {
+      await fetch("/api/checklist", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: id, date: todayStr }),
+      });
+    } catch {
+      // Revert on failure
+      void fetchChecklistItems();
+    }
+  };
+
+  const resetChecklistForm = () => {
+    setChecklistFormData({ title: "", frequency: "daily", daysOfWeek: [] });
+    setEditingChecklistItem(null);
+    setShowChecklistForm(false);
+  };
+
+  const handleAddChecklistItem = async () => {
+    if (!checklistFormData.title.trim()) return;
+    setChecklistLoading(true);
+    try {
+      const response = await fetch("/api/checklist", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: checklistFormData.title.trim(),
+          frequency: checklistFormData.frequency,
+          daysOfWeek: checklistFormData.frequency === "weekly" ? checklistFormData.daysOfWeek : undefined,
+        }),
+      });
+      if (response.ok) {
+        const newItem = await response.json() as ChecklistItem;
+        setChecklistItems(prev => [...prev, newItem]);
+        resetChecklistForm();
+        toast.success("Routine item added");
+      }
+    } catch {
+      toast.error("Failed to add routine item");
+    } finally {
+      setChecklistLoading(false);
+    }
+  };
+
+  const handleUpdateChecklistItem = async () => {
+    if (!editingChecklistItem || !checklistFormData.title.trim()) return;
+    setChecklistLoading(true);
+    try {
+      const response = await fetch("/api/checklist", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _id: editingChecklistItem._id,
+          title: checklistFormData.title.trim(),
+          frequency: checklistFormData.frequency,
+          daysOfWeek: checklistFormData.frequency === "weekly" ? checklistFormData.daysOfWeek : null,
+        }),
+      });
+      if (response.ok) {
+        const updated = await response.json() as ChecklistItem;
+        setChecklistItems(prev => prev.map(i => i._id === updated._id ? updated : i));
+        resetChecklistForm();
+        toast.success("Routine item updated");
+      }
+    } catch {
+      toast.error("Failed to update routine item");
+    } finally {
+      setChecklistLoading(false);
+    }
+  };
+
+  const handleDeleteChecklistItem = async (id: string) => {
+    setChecklistItems(prev => prev.filter(i => i._id !== id));
+    try {
+      const response = await fetch(`/api/checklist?id=${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        void fetchChecklistItems();
+        toast.error("Failed to delete routine item");
+      }
+    } catch {
+      void fetchChecklistItems();
+      toast.error("Failed to delete routine item");
+    }
+  };
+
+  const openChecklistItemForEdit = (item: ChecklistItem) => {
+    setEditingChecklistItem(item);
+    setChecklistFormData({
+      title: item.title,
+      frequency: item.frequency,
+      daysOfWeek: item.daysOfWeek ?? [],
+    });
+    setShowChecklistForm(true);
+  };
+
+  const toggleChecklistCollapsed = () => {
+    const newValue = !isChecklistCollapsed;
+    setIsChecklistCollapsed(newValue);
+    localStorage.setItem("eisenq-checklist-collapsed", String(newValue));
   };
 
   const handleAddTask = async () => {
@@ -2344,6 +2537,233 @@ export default function HomePage() {
           </Dialog.Content>
         </Dialog.Portal>
       </Dialog.Root>
+
+      {/* Today's Routine Checklist */}
+      <div className="px-4 md:px-6 pb-4 md:pb-6">
+        <div className={cn("rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+          {/* Checklist Header */}
+          <button
+            onClick={toggleChecklistCollapsed}
+            className={cn(
+              "w-full flex items-center justify-between p-3 md:p-4 rounded-lg",
+              isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
+            )}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-1.5 rounded-lg bg-purple-600/20">
+                <CheckCircle2 className="w-4 h-4 text-purple-500" />
+              </div>
+              <h2 className="font-semibold text-sm md:text-base">Today&apos;s Routine</h2>
+            </div>
+            <div className="flex items-center gap-3">
+              {todaysChecklistItems.length > 0 && (
+                <div className="flex items-center gap-2">
+                  <span className={cn("text-xs font-medium", isDarkMode ? "text-gray-400" : "text-gray-500")}>
+                    {completedCount}/{todaysChecklistItems.length}
+                  </span>
+                  <div className={cn("w-16 h-1.5 rounded-full overflow-hidden", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
+                    <div
+                      className="h-full rounded-full bg-purple-500 transition-all duration-300"
+                      style={{ width: `${todaysChecklistItems.length > 0 ? (completedCount / todaysChecklistItems.length) * 100 : 0}%` }}
+                    />
+                  </div>
+                </div>
+              )}
+              {isChecklistCollapsed ? (
+                <ChevronDown className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
+              ) : (
+                <ChevronUp className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
+              )}
+            </div>
+          </button>
+
+          {/* Checklist Body */}
+          {!isChecklistCollapsed && (
+            <div className={cn("px-3 md:px-4 pb-3 md:pb-4")}>
+              {todaysChecklistItems.length === 0 && !showChecklistForm ? (
+                <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                  <Circle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">No routine items for today</p>
+                  <button
+                    onClick={() => setShowChecklistForm(true)}
+                    className="text-xs text-purple-500 hover:text-purple-400 mt-1"
+                  >
+                    Add your first routine
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-1">
+                  {todaysChecklistItems.map((item) => {
+                    const isCompleted = isChecklistItemCompletedToday(item);
+                    return (
+                      <div
+                        key={item._id}
+                        className={cn(
+                          "group flex items-center gap-3 py-2 px-2 rounded-lg transition-colors",
+                          isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
+                        )}
+                      >
+                        <button
+                          onClick={() => handleToggleChecklistItem(item._id)}
+                          className="flex-shrink-0"
+                        >
+                          {isCompleted ? (
+                            <CheckCircle2 className="w-5 h-5 text-purple-500" />
+                          ) : (
+                            <Circle className={cn("w-5 h-5", isDarkMode ? "text-gray-600" : "text-gray-300")} />
+                          )}
+                        </button>
+                        <span
+                          className={cn(
+                            "flex-1 text-sm transition-all",
+                            isCompleted && "line-through",
+                            isCompleted
+                              ? isDarkMode ? "text-gray-600" : "text-gray-400"
+                              : isDarkMode ? "text-gray-200" : "text-gray-700"
+                          )}
+                        >
+                          {item.title}
+                        </span>
+                        <span className={cn(
+                          "text-xs px-1.5 py-0.5 rounded",
+                          isDarkMode ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-400"
+                        )}>
+                          {item.frequency === "daily"
+                            ? "daily"
+                            : item.daysOfWeek?.map(d => DAY_LABELS[d]).join(", ")}
+                        </span>
+                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                          <button
+                            onClick={() => openChecklistItemForEdit(item)}
+                            className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
+                          >
+                            <Edit3 className="w-3.5 h-3.5" />
+                          </button>
+                          <button
+                            onClick={() => handleDeleteChecklistItem(item._id)}
+                            className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+                          >
+                            <Trash2 className="w-3.5 h-3.5" />
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+
+              {/* Add/Edit Form */}
+              {showChecklistForm ? (
+                <div className={cn(
+                  "mt-3 p-3 rounded-lg border space-y-3",
+                  isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
+                )}>
+                  <input
+                    type="text"
+                    placeholder="Routine item title..."
+                    value={checklistFormData.title}
+                    onChange={(e) => setChecklistFormData(prev => ({ ...prev, title: e.target.value }))}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && checklistFormData.title.trim()) {
+                        void (editingChecklistItem ? handleUpdateChecklistItem() : handleAddChecklistItem());
+                      }
+                    }}
+                    autoFocus
+                    className={cn(
+                      "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
+                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                    )}
+                  />
+                  {/* Frequency Toggle */}
+                  <div className="flex items-center gap-2">
+                    <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Frequency:</span>
+                    <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
+                      <button
+                        onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "daily", daysOfWeek: [] }))}
+                        className={cn(
+                          "px-3 py-1 text-xs rounded-md font-medium transition-colors",
+                          checklistFormData.frequency === "daily"
+                            ? "bg-purple-600 text-white"
+                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                        )}
+                      >
+                        Daily
+                      </button>
+                      <button
+                        onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "weekly" }))}
+                        className={cn(
+                          "px-3 py-1 text-xs rounded-md font-medium transition-colors",
+                          checklistFormData.frequency === "weekly"
+                            ? "bg-purple-600 text-white"
+                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                        )}
+                      >
+                        Weekly
+                      </button>
+                    </div>
+                  </div>
+                  {/* Day of Week Selector */}
+                  {checklistFormData.frequency === "weekly" && (
+                    <div className="flex items-center gap-1.5">
+                      {DAY_LABELS.map((label, i) => (
+                        <button
+                          key={label}
+                          onClick={() => {
+                            setChecklistFormData(prev => ({
+                              ...prev,
+                              daysOfWeek: prev.daysOfWeek.includes(i)
+                                ? prev.daysOfWeek.filter(d => d !== i)
+                                : [...prev.daysOfWeek, i],
+                            }));
+                          }}
+                          className={cn(
+                            "w-8 h-8 rounded-full text-xs font-medium transition-colors",
+                            checklistFormData.daysOfWeek.includes(i)
+                              ? "bg-purple-600 text-white"
+                              : isDarkMode ? "bg-gray-700 text-gray-400 hover:bg-gray-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+                          )}
+                        >
+                          {label.charAt(0)}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                  {/* Form Actions */}
+                  <div className="flex gap-2">
+                    <button
+                      onClick={resetChecklistForm}
+                      className={cn(
+                        "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                        isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
+                      )}
+                    >
+                      Cancel
+                    </button>
+                    <button
+                      onClick={editingChecklistItem ? handleUpdateChecklistItem : handleAddChecklistItem}
+                      disabled={!checklistFormData.title.trim() || checklistLoading || (checklistFormData.frequency === "weekly" && checklistFormData.daysOfWeek.length === 0)}
+                      className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+                    >
+                      {checklistLoading ? "Saving..." : editingChecklistItem ? "Update" : "Add"}
+                    </button>
+                  </div>
+                </div>
+              ) : todaysChecklistItems.length > 0 && (
+                <button
+                  onClick={() => setShowChecklistForm(true)}
+                  className={cn(
+                    "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
+                    isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                  )}
+                >
+                  <Plus className="w-3.5 h-3.5" />
+                  Add routine item
+                </button>
+              )}
+            </div>
+          )}
+        </div>
+      </div>
 
       {/* Eisenhower Matrix */}
       <div className="px-4 md:px-6 pb-4 md:pb-6">
