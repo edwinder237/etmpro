@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import {
   Search,
   Sun,
@@ -29,7 +29,15 @@ import {
   Edit3,
   ChevronDown,
   ChevronUp,
-  Circle
+  Circle,
+  Cloud,
+  CloudRain,
+  CloudSnow,
+  CloudDrizzle,
+  CloudFog,
+  CloudLightning,
+  MapPin,
+  Loader2
 } from "lucide-react";
 import {
   startOfWeek,
@@ -139,6 +147,91 @@ const quadrantConfig = {
   }
 };
 
+const WEATHER_CODE_MAP: Record<number, { label: string; icon: string }> = {
+  0: { label: "Clear sky", icon: "sun" },
+  1: { label: "Mostly clear", icon: "sun" },
+  2: { label: "Partly cloudy", icon: "cloud" },
+  3: { label: "Overcast", icon: "cloud" },
+  45: { label: "Foggy", icon: "fog" },
+  48: { label: "Rime fog", icon: "fog" },
+  51: { label: "Light drizzle", icon: "drizzle" },
+  53: { label: "Drizzle", icon: "drizzle" },
+  55: { label: "Dense drizzle", icon: "drizzle" },
+  61: { label: "Light rain", icon: "rain" },
+  63: { label: "Rain", icon: "rain" },
+  65: { label: "Heavy rain", icon: "rain" },
+  71: { label: "Light snow", icon: "snow" },
+  73: { label: "Snow", icon: "snow" },
+  75: { label: "Heavy snow", icon: "snow" },
+  77: { label: "Snow grains", icon: "snow" },
+  80: { label: "Light showers", icon: "rain" },
+  81: { label: "Showers", icon: "rain" },
+  82: { label: "Heavy showers", icon: "rain" },
+  85: { label: "Snow showers", icon: "snow" },
+  86: { label: "Heavy snow showers", icon: "snow" },
+  95: { label: "Thunderstorm", icon: "lightning" },
+  96: { label: "Thunderstorm + hail", icon: "lightning" },
+  99: { label: "Thunderstorm + heavy hail", icon: "lightning" },
+};
+
+function WeatherIcon({ icon, className }: { icon: string; className?: string }) {
+  switch (icon) {
+    case "sun": return <Sun className={className} />;
+    case "cloud": return <Cloud className={className} />;
+    case "rain": return <CloudRain className={className} />;
+    case "snow": return <CloudSnow className={className} />;
+    case "drizzle": return <CloudDrizzle className={className} />;
+    case "fog": return <CloudFog className={className} />;
+    case "lightning": return <CloudLightning className={className} />;
+    default: return <Cloud className={className} />;
+  }
+}
+
+function getClothingSuggestion(feelsLike: number, weatherCode: number): string[] {
+  const tips: string[] = [];
+
+  // Temperature-based
+  if (feelsLike <= -15) {
+    tips.push("Heavy winter coat, insulated boots, gloves & scarf");
+  } else if (feelsLike <= -5) {
+    tips.push("Winter coat, warm layers, hat & gloves");
+  } else if (feelsLike <= 5) {
+    tips.push("Warm jacket, long sleeves, consider layers");
+  } else if (feelsLike <= 12) {
+    tips.push("Light jacket or sweater");
+  } else if (feelsLike <= 18) {
+    tips.push("Long sleeves or light layer");
+  } else if (feelsLike <= 25) {
+    tips.push("T-shirt and comfortable pants");
+  } else if (feelsLike <= 30) {
+    tips.push("Light and breathable clothing");
+  } else {
+    tips.push("Minimal light clothing, stay cool");
+  }
+
+  // Weather condition-based
+  const icon = WEATHER_CODE_MAP[weatherCode]?.icon;
+  if (icon === "rain" || icon === "drizzle") {
+    tips.push("Bring an umbrella & waterproof layer");
+  } else if (icon === "snow") {
+    tips.push("Waterproof boots & warm layers");
+  } else if (icon === "sun" && feelsLike > 20) {
+    tips.push("Sunglasses & sunscreen recommended");
+  }
+
+  return tips;
+}
+
+function safeGetItem(key: string): string | null {
+  try { return localStorage.getItem(key); } catch { return null; }
+}
+function safeSetItem(key: string, value: string): void {
+  try { localStorage.setItem(key, value); } catch { /* ignore */ }
+}
+function safeRemoveItem(key: string): void {
+  try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
 export default function HomePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
@@ -221,6 +314,28 @@ export default function HomePage() {
     priority: "medium" as TaskPriority,
     duration: "" as number | "",
   });
+
+  // Settings state
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [settingsKeyInput, setSettingsKeyInput] = useState("");
+
+  // Weather widget state
+  const [weatherLocation, setWeatherLocation] = useState("Montreal, Quebec");
+  const [weatherData, setWeatherData] = useState<{
+    temp: number;
+    feelsLike: number;
+    weatherCode: number;
+    hourly: Array<{ time: string; temp: number; weatherCode: number }>;
+  } | null>(null);
+  const [weatherLoading, setWeatherLoading] = useState(false);
+  const [weatherError, setWeatherError] = useState(false);
+  const [isEditingLocation, setIsEditingLocation] = useState(false);
+  const [locationInput, setLocationInput] = useState("");
+  const locationInputRef = useRef<HTMLInputElement>(null);
+  const [clothingSuggestion, setClothingSuggestion] = useState("");
+  const [clothingLoading, setClothingLoading] = useState(false);
+  const [plannedActivity, setPlannedActivity] = useState("");
 
   // Checklist state
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
@@ -492,6 +607,14 @@ export default function HomePage() {
     }
   }, []);
 
+  // Initialize weather location and Gemini API key from localStorage
+  useEffect(() => {
+    const stored = safeGetItem("eisenq-weather-location");
+    if (stored) setWeatherLocation(stored);
+    const storedKey = safeGetItem("eisenq-gemini-api-key");
+    if (storedKey) setGeminiApiKey(storedKey);
+  }, []);
+
   // Lock body scroll when any modal/drawer is open
   useEffect(() => {
     const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || statsDrawerType !== null || isRoutineDrawerOpen;
@@ -534,6 +657,118 @@ export default function HomePage() {
     } catch {
       // Silently fail - routine tasks are optional
     }
+  };
+
+  // Weather functions
+  const lastWeatherHashRef = useRef("");
+  const clothingCacheRef = useRef<Map<string, string>>(new Map());
+
+  const fetchWeather = useCallback(async (city: string, signal?: AbortSignal) => {
+    setWeatherLoading(true);
+    setWeatherError(false);
+    try {
+      const res = await fetch(`/api/weather?city=${encodeURIComponent(city)}`, { signal });
+      if (!res.ok) {
+        setWeatherError(true);
+        return;
+      }
+      const data = (await res.json()) as {
+        temp: number;
+        feelsLike: number;
+        weatherCode: number;
+        city: string;
+        hourly: Array<{ time: string; temp: number; weatherCode: number }>;
+      };
+      setWeatherData({ temp: data.temp, feelsLike: data.feelsLike, weatherCode: data.weatherCode, hourly: data.hourly });
+    } catch {
+      if (signal?.aborted) return;
+      setWeatherError(true);
+    } finally {
+      if (!signal?.aborted) setWeatherLoading(false);
+    }
+  }, []);
+
+  const fetchClothingSuggestion = useCallback(async (activity?: string, signal?: AbortSignal) => {
+    if (!geminiApiKey || !weatherData) return;
+
+    // Check cache — skip API call if we already have a suggestion for this combo
+    const cacheKey = `${weatherData.temp}-${weatherData.weatherCode}-${activity ?? ""}`;
+    const cached = clothingCacheRef.current.get(cacheKey);
+    if (cached) {
+      setClothingSuggestion(cached);
+      return;
+    }
+
+    setClothingLoading(true);
+    try {
+      const condition = WEATHER_CODE_MAP[weatherData.weatherCode]?.label ?? "Unknown";
+      const hourlyForecast = weatherData.hourly.map(h => ({
+        time: h.time,
+        temp: h.temp,
+        condition: WEATHER_CODE_MAP[h.weatherCode]?.label ?? "Unknown",
+      }));
+      const res = await fetch("/api/clothing-suggestion", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal,
+        body: JSON.stringify({
+          temp: weatherData.temp,
+          feelsLike: weatherData.feelsLike,
+          condition,
+          hourlyForecast,
+          activity: activity ?? "",
+          apiKey: geminiApiKey,
+        }),
+      });
+      if (res.ok) {
+        const data = (await res.json()) as { suggestion: string };
+        if (!signal?.aborted) {
+          setClothingSuggestion(data.suggestion);
+          clothingCacheRef.current.set(cacheKey, data.suggestion);
+        }
+      }
+    } catch {
+      // Fall back silently — rule-based suggestion will show
+    } finally {
+      if (!signal?.aborted) setClothingLoading(false);
+    }
+  }, [geminiApiKey, weatherData]);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    void fetchWeather(weatherLocation, controller.signal);
+    return () => controller.abort();
+  }, [weatherLocation, fetchWeather]);
+
+  // Fetch AI suggestion when weather data loads and API key is available
+  useEffect(() => {
+    if (!weatherData || !geminiApiKey) return;
+    // Skip if weather data hasn't materially changed
+    const hash = `${weatherData.temp}-${weatherData.weatherCode}`;
+    if (hash === lastWeatherHashRef.current) return;
+    lastWeatherHashRef.current = hash;
+    clothingCacheRef.current.clear();
+
+    const controller = new AbortController();
+    void fetchClothingSuggestion(undefined, controller.signal);
+    return () => controller.abort();
+  }, [weatherData, geminiApiKey, fetchClothingSuggestion]);
+
+  const handleLocationSubmit = () => {
+    const trimmed = locationInput.trim();
+    if (!trimmed) {
+      setIsEditingLocation(false);
+      return;
+    }
+    setWeatherLocation(trimmed);
+    safeSetItem("eisenq-weather-location", trimmed);
+    setIsEditingLocation(false);
+  };
+
+  const startEditingLocation = () => {
+    setLocationInput(weatherLocation);
+    setIsEditingLocation(true);
+    setTimeout(() => locationInputRef.current?.focus(), 0);
   };
 
   // Checklist functions
@@ -1531,7 +1766,10 @@ export default function HomePage() {
                 {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
               </button>
 
-              <button className={cn("p-2 rounded-lg hidden sm:block", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
+              <button
+                onClick={() => { setSettingsKeyInput(geminiApiKey); setIsSettingsOpen(true); }}
+                className={cn("p-2 rounded-lg hidden sm:block", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+              >
                 <Settings className="w-5 h-5" />
               </button>
               
@@ -2538,6 +2776,173 @@ export default function HomePage() {
         </Dialog.Portal>
       </Dialog.Root>
 
+      {/* Weather Widget */}
+      <div className="px-4 md:px-6 pb-4 md:pb-6">
+        <div className={cn("rounded-lg p-3 md:p-4", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+          {weatherLoading ? (
+            <div className="flex items-center gap-2">
+              <Loader2 className={cn("w-5 h-5 animate-spin", isDarkMode ? "text-gray-400" : "text-gray-500")} />
+              <span className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-500")}>Loading weather...</span>
+            </div>
+          ) : weatherError ? (
+            <div className="flex items-center gap-2">
+              <p className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>Could not load weather</p>
+              <button
+                onClick={() => void fetchWeather(weatherLocation)}
+                className="text-sm text-blue-500 hover:underline"
+              >
+                Retry
+              </button>
+            </div>
+          ) : weatherData ? (
+            <div>
+              {/* Location */}
+              <div className="mb-2">
+                {isEditingLocation ? (
+                  <div className="flex items-center gap-2">
+                    <MapPin className={cn("w-4 h-4 shrink-0", isDarkMode ? "text-gray-500" : "text-gray-400")} />
+                    <input
+                      ref={locationInputRef}
+                      type="text"
+                      value={locationInput}
+                      onChange={(e) => setLocationInput(e.target.value)}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") handleLocationSubmit();
+                        if (e.key === "Escape") setIsEditingLocation(false);
+                      }}
+                      onBlur={handleLocationSubmit}
+                      className={cn(
+                        "text-sm px-2 py-1 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 w-full",
+                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      )}
+                      placeholder="Type a city name..."
+                    />
+                  </div>
+                ) : (
+                  <button
+                    onClick={startEditingLocation}
+                    className={cn("flex items-center gap-1.5 text-sm hover:underline", isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-500 hover:text-gray-700")}
+                  >
+                    <MapPin className="w-4 h-4" />
+                    <span>{weatherLocation}</span>
+                    <Edit3 className="w-3 h-3 ml-1 opacity-50" />
+                  </button>
+                )}
+              </div>
+
+              {/* Current weather */}
+              <div className="flex items-center gap-3">
+                <WeatherIcon
+                  icon={WEATHER_CODE_MAP[weatherData.weatherCode]?.icon ?? "cloud"}
+                  className={cn("w-8 h-8",
+                    (WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "sun") ? "text-yellow-400" :
+                    (WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "rain" || WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "drizzle") ? "text-blue-400" :
+                    (WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "snow") ? "text-sky-300" :
+                    isDarkMode ? "text-gray-400" : "text-gray-500"
+                  )}
+                />
+                <div>
+                  <div className="flex items-baseline gap-2">
+                    <span className="text-xl font-semibold">{weatherData.temp}°C</span>
+                    <span className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                      {WEATHER_CODE_MAP[weatherData.weatherCode]?.label ?? "Unknown"}
+                    </span>
+                  </div>
+                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                    Feels like {weatherData.feelsLike}°C
+                  </span>
+                </div>
+              </div>
+
+              {/* Activity + Clothing suggestion */}
+              <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
+                <div className="flex items-center gap-2 mb-2">
+                  <input
+                    type="text"
+                    value={plannedActivity}
+                    onChange={(e) => setPlannedActivity(e.target.value)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" && weatherData && geminiApiKey) {
+                        void fetchClothingSuggestion(plannedActivity);
+                      }
+                    }}
+                    placeholder="Planned activity (e.g. running, cycling, hiking)..."
+                    className={cn(
+                      "flex-1 text-sm px-3 py-1.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      isDarkMode ? "bg-gray-800 border-gray-700 text-white placeholder-gray-600" : "bg-white border-gray-300 placeholder-gray-400"
+                    )}
+                  />
+                  <button
+                    onClick={() => {
+                      if (weatherData && geminiApiKey) {
+                        void fetchClothingSuggestion(plannedActivity);
+                      }
+                    }}
+                    disabled={clothingLoading || !geminiApiKey}
+                    className={cn(
+                      "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
+                      "bg-blue-600 text-white hover:bg-blue-700"
+                    )}
+                  >
+                    {clothingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Ask AI"}
+                  </button>
+                </div>
+                <div className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-500")}>
+                  <span className={cn("font-medium", isDarkMode ? "text-gray-300" : "text-gray-600")}>What to wear: </span>
+                  {clothingLoading ? (
+                    <span className="inline-flex items-center gap-1.5">
+                      <Loader2 className="w-3 h-3 animate-spin" />
+                      Thinking...
+                    </span>
+                  ) : clothingSuggestion ? (
+                    <span>{clothingSuggestion}</span>
+                  ) : (
+                    <span>
+                      {getClothingSuggestion(weatherData.feelsLike, weatherData.weatherCode).join(". ")}
+                      {!geminiApiKey && (
+                        <>
+                          {" — "}
+                          <button
+                            onClick={() => { setSettingsKeyInput(""); setIsSettingsOpen(true); }}
+                            className="text-blue-500 hover:underline"
+                          >
+                            Enable AI suggestions
+                          </button>
+                        </>
+                      )}
+                    </span>
+                  )}
+                </div>
+              </div>
+
+              {/* Hourly forecast */}
+              {weatherData.hourly.length > 0 && (
+                <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
+                  <p className={cn("text-xs font-medium mb-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>Rest of today</p>
+                  <div className="flex gap-3 overflow-x-auto pb-1">
+                    {weatherData.hourly.map((h) => (
+                      <div key={h.time} className="flex flex-col items-center gap-1 min-w-[3rem]">
+                        <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>{h.time}</span>
+                        <WeatherIcon
+                          icon={WEATHER_CODE_MAP[h.weatherCode]?.icon ?? "cloud"}
+                          className={cn("w-4 h-4",
+                            (WEATHER_CODE_MAP[h.weatherCode]?.icon === "sun") ? "text-yellow-400" :
+                            (WEATHER_CODE_MAP[h.weatherCode]?.icon === "rain" || WEATHER_CODE_MAP[h.weatherCode]?.icon === "drizzle") ? "text-blue-400" :
+                            (WEATHER_CODE_MAP[h.weatherCode]?.icon === "snow") ? "text-sky-300" :
+                            isDarkMode ? "text-gray-400" : "text-gray-500"
+                          )}
+                        />
+                        <span className={cn("text-xs font-medium")}>{h.temp}°</span>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : null}
+        </div>
+      </div>
+
       {/* Today's Routine Checklist */}
       <div className="px-4 md:px-6 pb-4 md:pb-6">
         <div className={cn("rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
@@ -3395,6 +3800,90 @@ export default function HomePage() {
           </div>
         </div>
       )}
+
+      {/* Settings Modal */}
+      <Dialog.Root open={isSettingsOpen} onOpenChange={setIsSettingsOpen}>
+        <Dialog.Portal>
+          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
+          <Dialog.Content
+            className={cn(
+              "fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-md rounded-xl shadow-xl p-6",
+              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+            )}
+          >
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-3">
+                <div className="p-2 rounded-lg bg-gray-600/20">
+                  <Settings className="w-5 h-5 text-gray-400" />
+                </div>
+                <Dialog.Title className="text-lg font-semibold">Settings</Dialog.Title>
+              </div>
+              <Dialog.Close asChild>
+                <button className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
+                  <X className="w-5 h-5" />
+                </button>
+              </Dialog.Close>
+            </div>
+
+            <Dialog.Description className="sr-only">Application settings</Dialog.Description>
+
+            <div className="space-y-4">
+              <div>
+                <label className={cn("block text-sm font-medium mb-1.5", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  Google Gemini API Key
+                </label>
+                <p className={cn("text-xs mb-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                  Used for AI clothing suggestions. Get a free key at{" "}
+                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                    aistudio.google.com
+                  </a>
+                </p>
+                <input
+                  type="password"
+                  value={settingsKeyInput}
+                  onChange={(e) => setSettingsKeyInput(e.target.value)}
+                  placeholder="AIza..."
+                  className={cn(
+                    "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm",
+                    isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                  )}
+                />
+              </div>
+              <div className="flex gap-2 pt-2">
+                {geminiApiKey && (
+                  <button
+                    onClick={() => {
+                      setGeminiApiKey("");
+                      setSettingsKeyInput("");
+                      safeRemoveItem("eisenq-gemini-api-key");
+                      setClothingSuggestion("");
+                    }}
+                    className={cn(
+                      "flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-colors text-red-400",
+                      isDarkMode ? "bg-red-500/10 hover:bg-red-500/20" : "bg-red-50 hover:bg-red-100"
+                    )}
+                  >
+                    Remove Key
+                  </button>
+                )}
+                <button
+                  onClick={() => {
+                    const trimmed = settingsKeyInput.trim();
+                    if (trimmed) {
+                      setGeminiApiKey(trimmed);
+                      safeSetItem("eisenq-gemini-api-key", trimmed);
+                    }
+                    setIsSettingsOpen(false);
+                  }}
+                  className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition-colors"
+                >
+                  Save
+                </button>
+              </div>
+            </div>
+          </Dialog.Content>
+        </Dialog.Portal>
+      </Dialog.Root>
 
       {/* Routine Tasks Drawer */}
       <Dialog.Root open={isRoutineDrawerOpen} onOpenChange={setIsRoutineDrawerOpen}>
