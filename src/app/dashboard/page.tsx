@@ -329,7 +329,7 @@ export default function HomePage() {
     hourly: Array<{ time: string; temp: number; weatherCode: number }>;
   } | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
-  const [weatherError, setWeatherError] = useState(false);
+  const [weatherError, setWeatherError] = useState("");
   const [isEditingLocation, setIsEditingLocation] = useState(false);
   const [locationInput, setLocationInput] = useState("");
   const locationInputRef = useRef<HTMLInputElement>(null);
@@ -665,11 +665,12 @@ export default function HomePage() {
 
   const fetchWeather = useCallback(async (city: string, signal?: AbortSignal) => {
     setWeatherLoading(true);
-    setWeatherError(false);
+    setWeatherError("");
     try {
       const res = await fetch(`/api/weather?city=${encodeURIComponent(city)}`, { signal });
       if (!res.ok) {
-        setWeatherError(true);
+        const errData = (await res.json().catch(() => null)) as { error?: string } | null;
+        setWeatherError(errData?.error ?? "Could not load weather");
         return;
       }
       const data = (await res.json()) as {
@@ -682,7 +683,7 @@ export default function HomePage() {
       setWeatherData({ temp: data.temp, feelsLike: data.feelsLike, weatherCode: data.weatherCode, hourly: data.hourly });
     } catch {
       if (signal?.aborted) return;
-      setWeatherError(true);
+      setWeatherError("Could not load weather");
     } finally {
       if (!signal?.aborted) setWeatherLoading(false);
     }
@@ -692,7 +693,7 @@ export default function HomePage() {
     if (!geminiApiKey || !weatherData) return;
 
     // Check cache — skip API call if we already have a suggestion for this combo
-    const cacheKey = `${weatherData.temp}-${weatherData.weatherCode}-${activity ?? ""}`;
+    const cacheKey = `${weatherLocation}-${weatherData.temp}-${weatherData.weatherCode}-${activity ?? ""}`;
     const cached = clothingCacheRef.current.get(cacheKey);
     if (cached) {
       setClothingSuggestion(cached);
@@ -732,7 +733,7 @@ export default function HomePage() {
     } finally {
       if (!signal?.aborted) setClothingLoading(false);
     }
-  }, [geminiApiKey, weatherData]);
+  }, [geminiApiKey, weatherData, weatherLocation]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -743,8 +744,8 @@ export default function HomePage() {
   // Fetch AI suggestion when weather data loads and API key is available
   useEffect(() => {
     if (!weatherData || !geminiApiKey) return;
-    // Skip if weather data hasn't materially changed
-    const hash = `${weatherData.temp}-${weatherData.weatherCode}`;
+    // Skip if weather data hasn't materially changed (include location to catch city changes)
+    const hash = `${weatherLocation}-${weatherData.temp}-${weatherData.weatherCode}`;
     if (hash === lastWeatherHashRef.current) return;
     lastWeatherHashRef.current = hash;
     clothingCacheRef.current.clear();
@@ -752,7 +753,7 @@ export default function HomePage() {
     const controller = new AbortController();
     void fetchClothingSuggestion(undefined, controller.signal);
     return () => controller.abort();
-  }, [weatherData, geminiApiKey, fetchClothingSuggestion]);
+  }, [weatherData, weatherLocation, geminiApiKey, fetchClothingSuggestion]);
 
   const handleLocationSubmit = () => {
     const trimmed = locationInput.trim();
@@ -2785,14 +2786,37 @@ export default function HomePage() {
               <span className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-500")}>Loading weather...</span>
             </div>
           ) : weatherError ? (
-            <div className="flex items-center gap-2">
-              <p className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>Could not load weather</p>
-              <button
-                onClick={() => void fetchWeather(weatherLocation)}
-                className="text-sm text-blue-500 hover:underline"
-              >
-                Retry
-              </button>
+            <div className="space-y-2">
+              <p className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                {weatherError}
+              </p>
+              <div className="flex items-center gap-2">
+                <MapPin className={cn("w-4 h-4 shrink-0", isDarkMode ? "text-gray-500" : "text-gray-400")} />
+                <input
+                  type="text"
+                  defaultValue={weatherLocation}
+                  onKeyDown={(e) => {
+                    if (e.key === "Enter") {
+                      const val = (e.target as HTMLInputElement).value.trim();
+                      if (val) {
+                        setWeatherLocation(val);
+                        safeSetItem("eisenq-weather-location", val);
+                      }
+                    }
+                  }}
+                  className={cn(
+                    "flex-1 text-sm px-3 py-1.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                    isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                  )}
+                  placeholder="Try a different city..."
+                />
+                <button
+                  onClick={() => void fetchWeather(weatherLocation)}
+                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
+                >
+                  Retry
+                </button>
+              </div>
             </div>
           ) : weatherData ? (
             <div>

@@ -76,6 +76,15 @@ export async function GET(req: NextRequest) {
     if (!first) {
       return NextResponse.json({ error: "City not found" }, { status: 404 });
     }
+
+    // Verify the result is relevant — normalize accents and compare case-insensitively
+    const normalize = (s: string) => s.toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+    const searchNorm = normalize(searchName);
+    const resultNorm = normalize(first.name);
+    if (!resultNorm.includes(searchNorm) && !searchNorm.includes(resultNorm)) {
+      return NextResponse.json({ error: `City "${searchName}" not found` }, { status: 404 });
+    }
+
     const { latitude, longitude, name, timezone } = first;
 
     // Fetch current weather + hourly forecast for today
