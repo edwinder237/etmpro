@@ -37,8 +37,25 @@ import {
   CloudFog,
   CloudLightning,
   MapPin,
-  Loader2
+  Loader2,
+  GripVertical
 } from "lucide-react";
+import {
+  DndContext,
+  closestCenter,
+  PointerSensor,
+  TouchSensor,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  verticalListSortingStrategy,
+  useSortable,
+  arrayMove,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import {
   startOfWeek,
   endOfWeek,
@@ -113,6 +130,21 @@ interface ChecklistItem {
   createdAt: string;
   updatedAt: string;
 }
+
+interface MaintenanceItem {
+  _id: string;
+  title: string;
+  intervalDays: number;
+  lastCompletedDate?: string;
+  nextDueDate: string;
+}
+
+const INTERVAL_PRESETS = [
+  { label: "Monthly", days: 30 },
+  { label: "3 months", days: 90 },
+  { label: "6 months", days: 180 },
+  { label: "Yearly", days: 365 },
+] as const;
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
@@ -230,6 +262,105 @@ function safeSetItem(key: string, value: string): void {
 }
 function safeRemoveItem(key: string): void {
   try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+function SortableChecklistItem({
+  item,
+  isCompleted,
+  isDarkMode,
+  onToggle,
+  onEdit,
+  onDelete,
+}: {
+  item: ChecklistItem;
+  isCompleted: boolean;
+  isDarkMode: boolean;
+  onToggle: (id: string) => void;
+  onEdit: (item: ChecklistItem) => void;
+  onDelete: (id: string) => void;
+}) {
+  const {
+    attributes,
+    listeners,
+    setNodeRef,
+    transform,
+    transition,
+    isDragging,
+  } = useSortable({ id: item._id });
+
+  const style = {
+    transform: CSS.Transform.toString(transform),
+    transition,
+    opacity: isDragging ? 0.5 : 1,
+    zIndex: isDragging ? 10 : undefined,
+    position: "relative" as const,
+  };
+
+  return (
+    <div
+      ref={setNodeRef}
+      style={style}
+      className={cn(
+        "group flex items-center gap-2 py-2 px-2 rounded-lg transition-colors",
+        isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
+      )}
+    >
+      <button
+        {...attributes}
+        {...listeners}
+        className={cn(
+          "flex-shrink-0 touch-none cursor-grab active:cursor-grabbing p-0.5 rounded",
+          isDarkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-300 hover:text-gray-500"
+        )}
+        aria-label="Drag to reorder"
+      >
+        <GripVertical className="w-4 h-4" />
+      </button>
+      <button
+        onClick={() => onToggle(item._id)}
+        className="flex-shrink-0"
+      >
+        {isCompleted ? (
+          <CheckCircle2 className="w-5 h-5 text-purple-500" />
+        ) : (
+          <Circle className={cn("w-5 h-5", isDarkMode ? "text-gray-600" : "text-gray-300")} />
+        )}
+      </button>
+      <span
+        className={cn(
+          "flex-1 text-sm transition-all",
+          isCompleted && "line-through",
+          isCompleted
+            ? isDarkMode ? "text-gray-600" : "text-gray-400"
+            : isDarkMode ? "text-gray-200" : "text-gray-700"
+        )}
+      >
+        {item.title}
+      </span>
+      <span className={cn(
+        "text-xs px-1.5 py-0.5 rounded",
+        isDarkMode ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-400"
+      )}>
+        {item.frequency === "daily"
+          ? "daily"
+          : item.daysOfWeek?.map(d => DAY_LABELS[d]).join(", ")}
+      </span>
+      <div className="flex items-center gap-0.5">
+        <button
+          onClick={() => onEdit(item)}
+          className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
+        >
+          <Edit3 className="w-3.5 h-3.5" />
+        </button>
+        <button
+          onClick={() => onDelete(item._id)}
+          className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+        >
+          <Trash2 className="w-3.5 h-3.5" />
+        </button>
+      </div>
+    </div>
+  );
 }
 
 export default function HomePage() {
@@ -351,6 +482,12 @@ export default function HomePage() {
   const [checklistLoading, setChecklistLoading] = useState(false);
   const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(false);
   const [showChecklistForm, setShowChecklistForm] = useState(false);
+  const [showAllChecklistItems, setShowAllChecklistItems] = useState(false);
+  const [checklistTab, setChecklistTab] = useState<"today" | "all" | "maintenance">("today");
+  const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>([]);
+  const [showMaintenanceForm, setShowMaintenanceForm] = useState(false);
+  const [editingMaintenanceItem, setEditingMaintenanceItem] = useState<MaintenanceItem | null>(null);
+  const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", intervalDays: 90, nextDueDate: "" });
   const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null);
   const [checklistFormData, setChecklistFormData] = useState({
     title: "",
@@ -584,6 +721,7 @@ export default function HomePage() {
     void fetchTasks();
     void fetchRoutineTasks();
     void fetchChecklistItems();
+    void fetchMaintenanceItems();
   }, []);
 
   // Initialize dark mode from localStorage or system preference
@@ -675,8 +813,33 @@ export default function HomePage() {
   // Weather functions
   const lastWeatherHashRef = useRef("");
   const clothingCacheRef = useRef<Map<string, string>>(new Map());
+  const WEATHER_CACHE_MS = 30 * 60 * 1000; // 30 minutes
+  const WEATHER_CACHE_KEY = "eisenq-weather-cache";
 
-  const fetchWeather = useCallback(async (city: string, signal?: AbortSignal) => {
+  const getWeatherCache = () => {
+    try {
+      const raw = localStorage.getItem(WEATHER_CACHE_KEY);
+      if (!raw) return null;
+      return JSON.parse(raw) as { city: string; data: NonNullable<typeof weatherData>; fetchedAt: number };
+    } catch { return null; }
+  };
+
+  const setWeatherCache = (city: string, data: NonNullable<typeof weatherData>) => {
+    safeSetItem(WEATHER_CACHE_KEY, JSON.stringify({ city, data, fetchedAt: Date.now() }));
+  };
+
+  const fetchWeather = useCallback(async (city: string, signal?: AbortSignal, forceRefresh = false) => {
+    // Check localStorage cache: same city + within 30 min → skip fetch
+    if (!forceRefresh) {
+      const cache = getWeatherCache();
+      if (cache && cache.city === city && Date.now() - cache.fetchedAt < WEATHER_CACHE_MS) {
+        setWeatherData(cache.data);
+        setWeatherError("");
+        setWeatherLoading(false);
+        return;
+      }
+    }
+
     setWeatherLoading(true);
     setWeatherError("");
     try {
@@ -693,7 +856,9 @@ export default function HomePage() {
         city: string;
         hourly: Array<{ time: string; temp: number; weatherCode: number }>;
       };
-      setWeatherData({ temp: data.temp, feelsLike: data.feelsLike, weatherCode: data.weatherCode, hourly: data.hourly });
+      const weatherResult = { temp: data.temp, feelsLike: data.feelsLike, weatherCode: data.weatherCode, hourly: data.hourly };
+      setWeatherData(weatherResult);
+      setWeatherCache(city, weatherResult);
     } catch {
       if (signal?.aborted) return;
       setWeatherError("Could not load weather");
@@ -721,7 +886,7 @@ export default function HomePage() {
         temp: h.temp,
         condition: WEATHER_CODE_MAP[h.weatherCode]?.label ?? "Unknown",
       }));
-      const res = await fetch("/api/clothing-suggestion", {
+      const res = await fetch("/api/weather", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         signal,
@@ -740,6 +905,10 @@ export default function HomePage() {
           setClothingSuggestion(data.suggestion);
           clothingCacheRef.current.set(cacheKey, data.suggestion);
         }
+      } else if (!signal?.aborted) {
+        const errData = (await res.json().catch(() => null)) as { error?: string } | null;
+        // Show error inline — rule-based fallback still renders below
+        setClothingSuggestion(errData?.error ?? "AI suggestion unavailable. Try again later.");
       }
     } catch {
       // Fall back silently — rule-based suggestion will show
@@ -754,19 +923,16 @@ export default function HomePage() {
     return () => controller.abort();
   }, [weatherLocation, fetchWeather]);
 
-  // Fetch AI suggestion when weather data loads and API key is available
+  // Clear clothing cache when weather/location changes materially
   useEffect(() => {
-    if (!weatherData || !geminiApiKey) return;
-    // Skip if weather data hasn't materially changed (include location to catch city changes)
+    if (!weatherData) return;
     const hash = `${weatherLocation}-${weatherData.temp}-${weatherData.weatherCode}`;
-    if (hash === lastWeatherHashRef.current) return;
-    lastWeatherHashRef.current = hash;
-    clothingCacheRef.current.clear();
-
-    const controller = new AbortController();
-    void fetchClothingSuggestion(undefined, controller.signal);
-    return () => controller.abort();
-  }, [weatherData, weatherLocation, geminiApiKey, fetchClothingSuggestion]);
+    if (hash !== lastWeatherHashRef.current) {
+      lastWeatherHashRef.current = hash;
+      clothingCacheRef.current.clear();
+      setClothingSuggestion("");
+    }
+  }, [weatherData, weatherLocation]);
 
   const handleLocationSubmit = () => {
     const trimmed = locationInput.trim();
@@ -975,6 +1141,126 @@ export default function HomePage() {
     const newValue = !isChecklistCollapsed;
     setIsChecklistCollapsed(newValue);
     localStorage.setItem("eisenq-checklist-collapsed", String(newValue));
+  };
+
+  // Maintenance item functions
+  const fetchMaintenanceItems = async () => {
+    try {
+      const res = await fetch("/api/maintenance");
+      if (res.ok) setMaintenanceItems(await res.json() as MaintenanceItem[]);
+    } catch { /* silently fail */ }
+  };
+
+  const handleAddMaintenanceItem = async () => {
+    if (!maintenanceFormData.title.trim()) return;
+    const nextDue = maintenanceFormData.nextDueDate || (() => {
+      const d = new Date();
+      d.setDate(d.getDate() + maintenanceFormData.intervalDays);
+      return d.toISOString().slice(0, 10);
+    })();
+    try {
+      const res = await fetch("/api/maintenance", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ title: maintenanceFormData.title.trim(), intervalDays: maintenanceFormData.intervalDays, nextDueDate: nextDue }),
+      });
+      if (res.ok) {
+        await fetchMaintenanceItems();
+        setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+        setShowMaintenanceForm(false);
+      }
+    } catch { /* silently fail */ }
+  };
+
+  const handleUpdateMaintenanceItem = async () => {
+    if (!editingMaintenanceItem || !maintenanceFormData.title.trim()) return;
+    try {
+      const res = await fetch("/api/maintenance", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _id: editingMaintenanceItem._id,
+          title: maintenanceFormData.title.trim(),
+          intervalDays: maintenanceFormData.intervalDays,
+          ...(maintenanceFormData.nextDueDate ? { nextDueDate: maintenanceFormData.nextDueDate } : {}),
+        }),
+      });
+      if (res.ok) {
+        await fetchMaintenanceItems();
+        setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+        setEditingMaintenanceItem(null);
+        setShowMaintenanceForm(false);
+      }
+    } catch { /* silently fail */ }
+  };
+
+  const handleDeleteMaintenanceItem = async (id: string) => {
+    setMaintenanceItems(prev => prev.filter(i => i._id !== id));
+    try {
+      const res = await fetch(`/api/maintenance?id=${id}`, { method: "DELETE" });
+      if (!res.ok) void fetchMaintenanceItems();
+    } catch { void fetchMaintenanceItems(); }
+  };
+
+  const handleMarkMaintenanceDone = async (id: string) => {
+    try {
+      const res = await fetch("/api/maintenance", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: id }),
+      });
+      if (res.ok) await fetchMaintenanceItems();
+    } catch { /* silently fail */ }
+  };
+
+  const resetMaintenanceForm = () => {
+    setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+    setEditingMaintenanceItem(null);
+    setShowMaintenanceForm(false);
+  };
+
+  // Drag-to-reorder sensors and handler
+  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 8 } });
+  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } });
+  const checklistSensors = useSensors(pointerSensor, touchSensor);
+
+  const handleChecklistDragEnd = (event: DragEndEvent) => {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+
+    const oldIndex = todaysChecklistItems.findIndex(i => i._id === active.id);
+    const newIndex = todaysChecklistItems.findIndex(i => i._id === over.id);
+    if (oldIndex === -1 || newIndex === -1) return;
+
+    const reorderedVisible = arrayMove(todaysChecklistItems, oldIndex, newIndex);
+
+    // Map reordered visible items back into the full array, preserving invisible items in place
+    let vIdx = 0;
+    const reorderedFull = checklistItems.map(item =>
+      isChecklistItemVisibleToday(item) ? reorderedVisible[vIdx++]! : item
+    );
+    const withNewOrder = reorderedFull.map((item, idx) => ({ ...item, sortOrder: idx }));
+
+    // Optimistic update
+    setChecklistItems(withNewOrder);
+
+    // Persist only changed items
+    const changed = withNewOrder
+      .filter(item => {
+        const orig = checklistItems.find(i => i._id === item._id);
+        return orig && orig.sortOrder !== item.sortOrder;
+      })
+      .map(({ _id, sortOrder }) => ({ _id, sortOrder }));
+
+    if (changed.length > 0) {
+      fetch("/api/checklist/reorder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items: changed }),
+      }).catch(() => {
+        void fetchChecklistItems(); // revert on failure
+      });
+    }
   };
 
   const handleAddTask = async () => {
@@ -2828,9 +3114,12 @@ export default function HomePage() {
         </Dialog.Portal>
       </Dialog.Root>
 
-      {/* Weather Widget */}
+      {/* Today + Weather row */}
       <div className="px-4 md:px-6 pb-4 md:pb-6">
-        <div className={cn("rounded-lg p-3 md:p-4", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
+
+        {/* Weather Widget */}
+        <div className={cn("rounded-lg p-3 md:p-4 xl:order-2", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
           {weatherLoading ? (
             <div className="flex items-center gap-2">
               <Loader2 className={cn("w-5 h-5 animate-spin", isDarkMode ? "text-gray-400" : "text-gray-500")} />
@@ -2862,7 +3151,7 @@ export default function HomePage() {
                   placeholder="Try a different city..."
                 />
                 <button
-                  onClick={() => void fetchWeather(weatherLocation)}
+                  onClick={() => void fetchWeather(weatherLocation, undefined, true)}
                   className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
                 >
                   Retry
@@ -3016,11 +3305,9 @@ export default function HomePage() {
             </div>
           ) : null}
         </div>
-      </div>
 
-      {/* Today — Routine + Calendar (unified card) */}
-      <div className="px-4 md:px-6 pb-4 md:pb-6">
-        <div className={cn("rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+        {/* Today — Routine + Calendar (unified card) */}
+        <div className={cn("xl:order-1 xl:col-span-2 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
 
           {/* Shared header */}
           <button
@@ -3069,197 +3356,393 @@ export default function HomePage() {
           {/* Body: two columns when calendar is active */}
           {!isChecklistCollapsed && (
             <div className={cn(
-              "flex flex-col md:flex-row",
-              icalUrls.length > 0 && (isDarkMode ? "divide-y md:divide-y-0 md:divide-x divide-gray-800" : "divide-y md:divide-y-0 md:divide-x divide-gray-100")
+              "flex flex-col lg:flex-row",
+              icalUrls.length > 0 && (isDarkMode ? "divide-y lg:divide-y-0 lg:divide-x divide-gray-800" : "divide-y lg:divide-y-0 lg:divide-x divide-gray-100")
             )}>
 
               {/* Routine column */}
-              <div className={cn("px-3 md:px-4 pb-3 md:pb-4", icalUrls.length > 0 ? "md:w-2/3" : "w-full")}>
-                {todaysChecklistItems.length === 0 && !showChecklistForm ? (
-                  <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                    <Circle className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                    <p className="text-sm">No routine items for today</p>
-                    <button
-                      onClick={() => setShowChecklistForm(true)}
-                      className="text-xs text-purple-500 hover:text-purple-400 mt-1"
-                    >
-                      Add your first routine
-                    </button>
+              <div className={cn("px-3 md:px-4 pb-3 md:pb-4", icalUrls.length > 0 ? "lg:w-2/3" : "w-full")}>
+                {/* Tab toggle */}
+                <div className="flex items-center gap-1 mt-1 mb-2">
+                  <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
+                    {(["today", "all", "maintenance"] as const).map(tab => (
+                      <button
+                        key={tab}
+                        onClick={() => { setChecklistTab(tab); setShowAllChecklistItems(tab === "all"); }}
+                        className={cn(
+                          "px-2.5 py-1 text-xs rounded-md font-medium transition-colors capitalize",
+                          checklistTab === tab
+                            ? "bg-purple-600 text-white"
+                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                        )}
+                      >
+                        {tab}
+                      </button>
+                    ))}
                   </div>
-                ) : (
-                  <div className="space-y-1 mt-1">
-                    {todaysChecklistItems.map((item) => {
-                      const isCompleted = isChecklistItemCompletedToday(item);
-                      return (
-                        <div
-                          key={item._id}
-                          className={cn(
-                            "group flex items-center gap-3 py-2 px-2 rounded-lg transition-colors",
-                            isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
-                          )}
-                        >
-                          <button
-                            onClick={() => handleToggleChecklistItem(item._id)}
-                            className="flex-shrink-0"
-                          >
-                            {isCompleted ? (
-                              <CheckCircle2 className="w-5 h-5 text-purple-500" />
-                            ) : (
-                              <Circle className={cn("w-5 h-5", isDarkMode ? "text-gray-600" : "text-gray-300")} />
-                            )}
-                          </button>
-                          <span
-                            className={cn(
-                              "flex-1 text-sm transition-all",
-                              isCompleted && "line-through",
-                              isCompleted
-                                ? isDarkMode ? "text-gray-600" : "text-gray-400"
-                                : isDarkMode ? "text-gray-200" : "text-gray-700"
-                            )}
-                          >
-                            {item.title}
-                          </span>
-                          <span className={cn(
-                            "text-xs px-1.5 py-0.5 rounded",
-                            isDarkMode ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-400"
-                          )}>
-                            {item.frequency === "daily"
-                              ? "daily"
-                              : item.daysOfWeek?.map(d => DAY_LABELS[d]).join(", ")}
-                          </span>
-                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                </div>
+
+                {/* Routine tabs: Today / All */}
+                {checklistTab !== "maintenance" && (
+                  <>
+                    {(() => {
+                      const displayItems = showAllChecklistItems ? checklistItems : todaysChecklistItems;
+                      if (displayItems.length === 0 && !showChecklistForm) {
+                        return (
+                          <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                            <Circle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                            <p className="text-sm">{showAllChecklistItems ? "No routine items yet" : "No routine items for today"}</p>
                             <button
-                              onClick={() => openChecklistItemForEdit(item)}
-                              className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
+                              onClick={() => setShowChecklistForm(true)}
+                              className="text-xs text-purple-500 hover:text-purple-400 mt-1"
                             >
-                              <Edit3 className="w-3.5 h-3.5" />
+                              Add your first routine
+                            </button>
+                          </div>
+                        );
+                      }
+                      return (
+                        <DndContext sensors={checklistSensors} collisionDetection={closestCenter} onDragEnd={handleChecklistDragEnd}>
+                          <SortableContext items={displayItems.map(i => i._id)} strategy={verticalListSortingStrategy}>
+                            <div className="space-y-1">
+                              {displayItems.map((item) => {
+                                const visibleToday = isChecklistItemVisibleToday(item);
+                                return (
+                                  <div key={item._id} className={cn(!visibleToday && showAllChecklistItems && "opacity-50")}>
+                                    <SortableChecklistItem
+                                      item={item}
+                                      isCompleted={visibleToday ? isChecklistItemCompletedToday(item) : false}
+                                      isDarkMode={isDarkMode}
+                                      onToggle={handleToggleChecklistItem}
+                                      onEdit={openChecklistItemForEdit}
+                                      onDelete={handleDeleteChecklistItem}
+                                    />
+                                  </div>
+                                );
+                              })}
+                            </div>
+                          </SortableContext>
+                        </DndContext>
+                      );
+                    })()}
+
+                    {/* Add/Edit Form */}
+                    {showChecklistForm ? (
+                      <div className={cn(
+                        "mt-3 p-3 rounded-lg border space-y-3",
+                        isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
+                      )}>
+                        <input
+                          type="text"
+                          placeholder="Routine item title..."
+                          value={checklistFormData.title}
+                          onChange={(e) => setChecklistFormData(prev => ({ ...prev, title: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && checklistFormData.title.trim()) {
+                              void (editingChecklistItem ? handleUpdateChecklistItem() : handleAddChecklistItem());
+                            }
+                          }}
+                          autoFocus
+                          className={cn(
+                            "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
+                            isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                          )}
+                        />
+                        <div className="flex items-center gap-2">
+                          <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Frequency:</span>
+                          <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
+                            <button
+                              onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "daily", daysOfWeek: [] }))}
+                              className={cn(
+                                "px-3 py-1 text-xs rounded-md font-medium transition-colors",
+                                checklistFormData.frequency === "daily"
+                                  ? "bg-purple-600 text-white"
+                                  : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                              )}
+                            >
+                              Daily
                             </button>
                             <button
-                              onClick={() => handleDeleteChecklistItem(item._id)}
-                              className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+                              onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "weekly" }))}
+                              className={cn(
+                                "px-3 py-1 text-xs rounded-md font-medium transition-colors",
+                                checklistFormData.frequency === "weekly"
+                                  ? "bg-purple-600 text-white"
+                                  : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                              )}
                             >
-                              <Trash2 className="w-3.5 h-3.5" />
+                              Weekly
                             </button>
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Add/Edit Form */}
-                {showChecklistForm ? (
-                  <div className={cn(
-                    "mt-3 p-3 rounded-lg border space-y-3",
-                    isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
-                  )}>
-                    <input
-                      type="text"
-                      placeholder="Routine item title..."
-                      value={checklistFormData.title}
-                      onChange={(e) => setChecklistFormData(prev => ({ ...prev, title: e.target.value }))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && checklistFormData.title.trim()) {
-                          void (editingChecklistItem ? handleUpdateChecklistItem() : handleAddChecklistItem());
-                        }
-                      }}
-                      autoFocus
-                      className={cn(
-                        "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
-                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                      )}
-                    />
-                    {/* Frequency Toggle */}
-                    <div className="flex items-center gap-2">
-                      <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Frequency:</span>
-                      <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
-                        <button
-                          onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "daily", daysOfWeek: [] }))}
-                          className={cn(
-                            "px-3 py-1 text-xs rounded-md font-medium transition-colors",
-                            checklistFormData.frequency === "daily"
-                              ? "bg-purple-600 text-white"
-                              : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                          )}
-                        >
-                          Daily
-                        </button>
-                        <button
-                          onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "weekly" }))}
-                          className={cn(
-                            "px-3 py-1 text-xs rounded-md font-medium transition-colors",
-                            checklistFormData.frequency === "weekly"
-                              ? "bg-purple-600 text-white"
-                              : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                          )}
-                        >
-                          Weekly
-                        </button>
-                      </div>
-                    </div>
-                    {/* Day of Week Selector */}
-                    {checklistFormData.frequency === "weekly" && (
-                      <div className="flex items-center gap-1.5">
-                        {DAY_LABELS.map((label, i) => (
+                        {checklistFormData.frequency === "weekly" && (
+                          <div className="flex items-center gap-1.5">
+                            {DAY_LABELS.map((label, i) => (
+                              <button
+                                key={label}
+                                onClick={() => {
+                                  setChecklistFormData(prev => ({
+                                    ...prev,
+                                    daysOfWeek: prev.daysOfWeek.includes(i)
+                                      ? prev.daysOfWeek.filter(d => d !== i)
+                                      : [...prev.daysOfWeek, i],
+                                  }));
+                                }}
+                                className={cn(
+                                  "w-8 h-8 rounded-full text-xs font-medium transition-colors",
+                                  checklistFormData.daysOfWeek.includes(i)
+                                    ? "bg-purple-600 text-white"
+                                    : isDarkMode ? "bg-gray-700 text-gray-400 hover:bg-gray-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+                                )}
+                              >
+                                {label.charAt(0)}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <div className="flex gap-2">
                           <button
-                            key={label}
-                            onClick={() => {
-                              setChecklistFormData(prev => ({
-                                ...prev,
-                                daysOfWeek: prev.daysOfWeek.includes(i)
-                                  ? prev.daysOfWeek.filter(d => d !== i)
-                                  : [...prev.daysOfWeek, i],
-                              }));
-                            }}
+                            onClick={resetChecklistForm}
                             className={cn(
-                              "w-8 h-8 rounded-full text-xs font-medium transition-colors",
-                              checklistFormData.daysOfWeek.includes(i)
-                                ? "bg-purple-600 text-white"
-                                : isDarkMode ? "bg-gray-700 text-gray-400 hover:bg-gray-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+                              "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                              isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
                             )}
                           >
-                            {label.charAt(0)}
+                            Cancel
                           </button>
-                        ))}
+                          <button
+                            onClick={editingChecklistItem ? handleUpdateChecklistItem : handleAddChecklistItem}
+                            disabled={!checklistFormData.title.trim() || checklistLoading || (checklistFormData.frequency === "weekly" && checklistFormData.daysOfWeek.length === 0)}
+                            className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+                          >
+                            {checklistLoading ? "Saving..." : editingChecklistItem ? "Update" : "Add"}
+                          </button>
+                        </div>
                       </div>
-                    )}
-                    {/* Form Actions */}
-                    <div className="flex gap-2">
+                    ) : (showAllChecklistItems ? checklistItems.length > 0 : todaysChecklistItems.length > 0) && (
                       <button
-                        onClick={resetChecklistForm}
+                        onClick={() => setShowChecklistForm(true)}
                         className={cn(
-                          "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                          isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
+                          "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
+                          isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
                         )}
                       >
-                        Cancel
+                        <Plus className="w-3.5 h-3.5" />
+                        Add routine item
                       </button>
-                      <button
-                        onClick={editingChecklistItem ? handleUpdateChecklistItem : handleAddChecklistItem}
-                        disabled={!checklistFormData.title.trim() || checklistLoading || (checklistFormData.frequency === "weekly" && checklistFormData.daysOfWeek.length === 0)}
-                        className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
-                      >
-                        {checklistLoading ? "Saving..." : editingChecklistItem ? "Update" : "Add"}
-                      </button>
-                    </div>
-                  </div>
-                ) : todaysChecklistItems.length > 0 && (
-                  <button
-                    onClick={() => setShowChecklistForm(true)}
-                    className={cn(
-                      "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
-                      isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
                     )}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add routine item
-                  </button>
+
+                    {/* Due maintenance items on Today tab */}
+                    {checklistTab === "today" && (() => {
+                      const today = new Date();
+                      today.setHours(0, 0, 0, 0);
+                      const dueItems = maintenanceItems.filter(item => {
+                        const due = new Date(item.nextDueDate + "T00:00:00");
+                        return due.getTime() <= today.getTime() + 7 * 86400000; // due within 7 days
+                      });
+                      if (!dueItems.length) return null;
+                      return (
+                        <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
+                          <p className={cn("text-xs font-semibold uppercase tracking-wide mb-2 px-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                            Maintenance due
+                          </p>
+                          <div className="space-y-1">
+                            {dueItems.map(item => {
+                              const due = new Date(item.nextDueDate + "T00:00:00");
+                              const diffDays = Math.round((due.getTime() - today.getTime()) / 86400000);
+                              const isOverdue = diffDays < 0;
+                              return (
+                                <div key={item._id} className={cn("flex items-center gap-3 py-1.5 px-2 rounded-lg", isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50")}>
+                                  <button
+                                    onClick={() => void handleMarkMaintenanceDone(item._id)}
+                                    className="flex-shrink-0"
+                                    title="Mark as done — resets the timer"
+                                  >
+                                    <Circle className={cn("w-5 h-5", isOverdue ? "text-red-400" : "text-yellow-500")} />
+                                  </button>
+                                  <span className={cn("flex-1 text-sm truncate", isDarkMode ? "text-gray-200" : "text-gray-700")}>{item.title}</span>
+                                  <span className={cn("text-xs flex-shrink-0", isOverdue ? "text-red-400" : "text-yellow-500")}>
+                                    {isOverdue ? `${Math.abs(diffDays)}d overdue` : diffDays === 0 ? "today" : `in ${diffDays}d`}
+                                  </span>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+                  </>
+                )}
+
+                {/* Maintenance tab */}
+                {checklistTab === "maintenance" && (
+                  <div>
+                    {maintenanceItems.length === 0 && !showMaintenanceForm ? (
+                      <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                        <Repeat className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                        <p className="text-sm">No maintenance items yet</p>
+                        <button
+                          onClick={() => setShowMaintenanceForm(true)}
+                          className="text-xs text-purple-500 hover:text-purple-400 mt-1"
+                        >
+                          Add your first item
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="space-y-1.5">
+                        {maintenanceItems.map((item) => {
+                          const today = new Date();
+                          today.setHours(0, 0, 0, 0);
+                          const due = new Date(item.nextDueDate + "T00:00:00");
+                          const diffMs = due.getTime() - today.getTime();
+                          const diffDays = Math.round(diffMs / 86400000);
+                          const isOverdue = diffDays < 0;
+                          const isDueSoon = diffDays >= 0 && diffDays <= 7;
+
+                          return (
+                            <div
+                              key={item._id}
+                              className={cn(
+                                "flex items-center gap-3 py-2 px-2 rounded-lg",
+                                isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
+                              )}
+                            >
+                              <button
+                                onClick={() => void handleMarkMaintenanceDone(item._id)}
+                                className="flex-shrink-0"
+                                title="Mark as done — resets the timer"
+                              >
+                                <Circle className={cn("w-5 h-5", isOverdue ? "text-red-400" : isDueSoon ? "text-yellow-500" : isDarkMode ? "text-gray-600" : "text-gray-300")} />
+                              </button>
+                              <div className="flex-1 min-w-0">
+                                <p className={cn("text-sm font-medium truncate", isDarkMode ? "text-gray-200" : "text-gray-700")}>
+                                  {item.title}
+                                </p>
+                                <p className={cn("text-xs", isOverdue ? "text-red-400" : isDueSoon ? "text-yellow-500" : isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                                  {isOverdue
+                                    ? `Overdue by ${Math.abs(diffDays)} day${Math.abs(diffDays) !== 1 ? "s" : ""}`
+                                    : diffDays === 0
+                                      ? "Due today"
+                                      : `Due in ${diffDays} day${diffDays !== 1 ? "s" : ""}`}
+                                  {" · every "}
+                                  {item.intervalDays >= 365
+                                    ? `${Math.round(item.intervalDays / 365)} year${Math.round(item.intervalDays / 365) !== 1 ? "s" : ""}`
+                                    : item.intervalDays >= 30
+                                      ? `${Math.round(item.intervalDays / 30)} month${Math.round(item.intervalDays / 30) !== 1 ? "s" : ""}`
+                                      : `${item.intervalDays} day${item.intervalDays !== 1 ? "s" : ""}`}
+                                </p>
+                              </div>
+                              <div className="flex items-center gap-0.5">
+                                <button
+                                  onClick={() => {
+                                    setEditingMaintenanceItem(item);
+                                    setMaintenanceFormData({ title: item.title, intervalDays: item.intervalDays, nextDueDate: item.nextDueDate });
+                                    setShowMaintenanceForm(true);
+                                  }}
+                                  className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
+                                >
+                                  <Edit3 className="w-3.5 h-3.5" />
+                                </button>
+                                <button
+                                  onClick={() => void handleDeleteMaintenanceItem(item._id)}
+                                  className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+                                >
+                                  <Trash2 className="w-3.5 h-3.5" />
+                                </button>
+                              </div>
+                            </div>
+                          );
+                        })}
+                      </div>
+                    )}
+
+                    {/* Maintenance Add/Edit Form */}
+                    {showMaintenanceForm ? (
+                      <div className={cn(
+                        "mt-3 p-3 rounded-lg border space-y-3",
+                        isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
+                      )}>
+                        <input
+                          type="text"
+                          placeholder="e.g. Doctor appointment, Change toothbrush..."
+                          value={maintenanceFormData.title}
+                          onChange={(e) => setMaintenanceFormData(prev => ({ ...prev, title: e.target.value }))}
+                          autoFocus
+                          className={cn(
+                            "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
+                            isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                          )}
+                        />
+                        <div className="flex items-center gap-2 flex-wrap">
+                          <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Every:</span>
+                          <div className={cn("inline-flex rounded-lg p-0.5 flex-wrap", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
+                            {INTERVAL_PRESETS.map(p => (
+                              <button
+                                key={p.days}
+                                onClick={() => setMaintenanceFormData(prev => ({ ...prev, intervalDays: p.days }))}
+                                className={cn(
+                                  "px-2.5 py-1 text-xs rounded-md font-medium transition-colors",
+                                  maintenanceFormData.intervalDays === p.days
+                                    ? "bg-purple-600 text-white"
+                                    : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                                )}
+                              >
+                                {p.label}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Next due:</span>
+                          <input
+                            type="date"
+                            value={maintenanceFormData.nextDueDate}
+                            onChange={(e) => setMaintenanceFormData(prev => ({ ...prev, nextDueDate: e.target.value }))}
+                            className={cn(
+                              "px-2 py-1 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-purple-500",
+                              isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                            )}
+                          />
+                          <span className={cn("text-xs", isDarkMode ? "text-gray-600" : "text-gray-400")}>(optional)</span>
+                        </div>
+                        <div className="flex gap-2">
+                          <button
+                            onClick={resetMaintenanceForm}
+                            className={cn(
+                              "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                              isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
+                            )}
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            onClick={() => void (editingMaintenanceItem ? handleUpdateMaintenanceItem() : handleAddMaintenanceItem())}
+                            disabled={!maintenanceFormData.title.trim()}
+                            className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
+                          >
+                            {editingMaintenanceItem ? "Update" : "Add"}
+                          </button>
+                        </div>
+                      </div>
+                    ) : maintenanceItems.length > 0 && (
+                      <button
+                        onClick={() => setShowMaintenanceForm(true)}
+                        className={cn(
+                          "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
+                          isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                        )}
+                      >
+                        <Plus className="w-3.5 h-3.5" />
+                        Add maintenance item
+                      </button>
+                    )}
+                  </div>
                 )}
               </div>
 
               {/* Calendar Events column */}
               {icalUrls.length > 0 && (
-                <div className="px-3 md:px-4 pb-3 md:pb-4 pt-2 md:w-1/3">
+                <div className="px-3 md:px-4 pb-3 md:pb-4 pt-2 lg:w-1/3">
                   {calendarLoading && calendarGroups.length === 0 ? (
                     <div className="space-y-2 py-2">
                       {[1, 2, 3].map((i) => (
@@ -3321,6 +3804,8 @@ export default function HomePage() {
             </div>
           )}
         </div>
+
+        </div>{/* end grid */}
       </div>
 
       {/* Eisenhower Matrix */}

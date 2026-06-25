@@ -48,8 +48,20 @@ export interface ChecklistItem {
   updatedAt: Date;
 }
 
+export interface MaintenanceItem {
+  _id?: ObjectId;
+  title: string;
+  intervalDays: number;         // e.g. 90 = every 3 months, 365 = yearly
+  lastCompletedDate?: string;   // ISO date "YYYY-MM-DD"
+  nextDueDate: string;          // ISO date "YYYY-MM-DD"
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export const collections = {
   tasks: "tasks",
   routineTasks: "routineTasks",
   checklistItems: "checklistItems",
+  maintenanceItems: "maintenanceItems",
 } as const;
