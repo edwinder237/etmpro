@@ -793,7 +793,7 @@ export default function HomePage() {
       const res = await fetch("/api/calendar/feeds", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ urls }),
+        body: JSON.stringify({ urls, timezone: Intl.DateTimeFormat().resolvedOptions().timeZone }),
         signal,
       });
       if (signal?.aborted) return;

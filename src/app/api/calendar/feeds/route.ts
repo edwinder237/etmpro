@@ -24,6 +24,7 @@ function checkRateLimit(ip: string): boolean {
 
 const bodySchema = z.object({
   urls: z.array(z.string().url("Invalid calendar URL")).min(1).max(10),
+  timezone: z.string().max(50).default("UTC"),
 });
 
 export interface CalendarEvent {
@@ -41,7 +42,27 @@ export interface CalendarGroup {
   error: boolean;
 }
 
-async function parseFeed(url: string, index: number): Promise<CalendarGroup> {
+/**
+ * Returns start-of-day and end-of-day in the given IANA timezone as UTC Dates.
+ * Uses the toLocaleString trick: parse "now" as a local date string in the target
+ * timezone, extract y/m/d, then shift back to UTC.
+ */
+function getTodayBounds(timezone: string): { todayStart: Date; todayEnd: Date } {
+  const now = new Date();
+  // Represent now in the user's timezone as a parseable local datetime
+  const localNow = new Date(now.toLocaleString("en-US", { timeZone: timezone }));
+  const y = localNow.getFullYear();
+  const m = localNow.getMonth();
+  const d = localNow.getDate();
+  // UTC offset: positive means the timezone is behind UTC (e.g. GMT-4 → +14400000ms)
+  const utcOffset = now.getTime() - localNow.getTime();
+  return {
+    todayStart: new Date(new Date(y, m, d, 0, 0, 0, 0).getTime() + utcOffset),
+    todayEnd:   new Date(new Date(y, m, d, 23, 59, 59, 999).getTime() + utcOffset),
+  };
+}
+
+async function parseFeed(url: string, index: number, timezone: string): Promise<CalendarGroup> {
   const fallbackName = `Calendar ${index + 1}`;
   try {
     const feedRes = await fetch(url, {
@@ -54,9 +75,7 @@ async function parseFeed(url: string, index: number): Promise<CalendarGroup> {
     const calendarName = /^X-WR-CALNAME:(.+)$/m.exec(feedText)?.[1]?.trim() ?? fallbackName;
     const allComponents = ical.parseICS(feedText);
 
-    const now = new Date();
-    const todayStart = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0);
-    const todayEnd = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 23, 59, 59);
+    const { todayStart, todayEnd } = getTodayBounds(timezone);
 
     const todayEvents: CalendarEvent[] = [];
 
@@ -127,7 +146,8 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
     }
 
-    const groups = await Promise.all(parsed.data.urls.map(parseFeed));
+    const { timezone } = parsed.data;
+    const groups = await Promise.all(parsed.data.urls.map((url, i) => parseFeed(url, i, timezone)));
 
     // POST responses are user-specific — must not be cached by CDN
     return NextResponse.json({ groups }, { headers: { "Cache-Control": "no-store" } });
