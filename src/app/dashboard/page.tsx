@@ -319,6 +319,15 @@ export default function HomePage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
+  const [icalUrls, setIcalUrls] = useState<string[]>([]);
+  const [settingsIcalInput, setSettingsIcalInput] = useState("");
+  const [settingsIcalError, setSettingsIcalError] = useState("");
+
+  // Calendar feed state
+  interface CalendarEvent { id: string; title: string; start: string; end: string; allDay: boolean; location?: string; }
+  interface CalendarGroup { name: string; events: CalendarEvent[]; error?: boolean; }
+  const [calendarGroups, setCalendarGroups] = useState<CalendarGroup[]>([]);
+  const [calendarLoading, setCalendarLoading] = useState(false);
 
   // Weather widget state
   const [weatherLocation, setWeatherLocation] = useState("Montreal, Quebec");
@@ -607,12 +616,16 @@ export default function HomePage() {
     }
   }, []);
 
-  // Initialize weather location and Gemini API key from localStorage
+  // Initialize weather location, Gemini API key, and iCal URLs from localStorage
   useEffect(() => {
     const stored = safeGetItem("eisenq-weather-location");
     if (stored) setWeatherLocation(stored);
     const storedKey = safeGetItem("eisenq-gemini-api-key");
     if (storedKey) setGeminiApiKey(storedKey);
+    const storedUrls = safeGetItem("eisenq-ical-urls");
+    if (storedUrls) {
+      try { setIcalUrls(JSON.parse(storedUrls) as string[]); } catch { /* ignore */ }
+    }
   }, []);
 
   // Lock body scroll when any modal/drawer is open
@@ -771,6 +784,44 @@ export default function HomePage() {
     setIsEditingLocation(true);
     setTimeout(() => locationInputRef.current?.focus(), 0);
   };
+
+  // Calendar feed functions
+  const fetchCalendarEvents = useCallback(async (urls: string[], signal?: AbortSignal) => {
+    if (!urls.length) return;
+    setCalendarLoading(true);
+    try {
+      const res = await fetch("/api/calendar/feeds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ urls }),
+        signal,
+      });
+      if (signal?.aborted) return;
+      if (!res.ok) return;
+      const data = (await res.json()) as { groups: CalendarGroup[] };
+      if (signal?.aborted) return;
+      setCalendarGroups(data.groups);
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+    } finally {
+      if (!signal?.aborted) setCalendarLoading(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!icalUrls.length) return;
+    const controller = new AbortController();
+    void fetchCalendarEvents(icalUrls, controller.signal);
+    return () => controller.abort();
+  }, [icalUrls, fetchCalendarEvents]);
+
+  // Refresh calendar when tab regains focus
+  useEffect(() => {
+    if (!icalUrls.length) return;
+    const onFocus = () => { void fetchCalendarEvents(icalUrls); };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, [icalUrls, fetchCalendarEvents]);
 
   // Checklist functions
   const fetchChecklistItems = async () => {
@@ -2967,22 +3018,31 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Today's Routine Checklist */}
+      {/* Today — Routine + Calendar (unified card) */}
       <div className="px-4 md:px-6 pb-4 md:pb-6">
         <div className={cn("rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-          {/* Checklist Header */}
+
+          {/* Shared header */}
           <button
             onClick={toggleChecklistCollapsed}
             className={cn(
-              "w-full flex items-center justify-between p-3 md:p-4 rounded-lg",
+              "w-full flex items-center justify-between p-3 md:p-4 rounded-t-lg",
               isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
             )}
           >
             <div className="flex items-center gap-3">
-              <div className="p-1.5 rounded-lg bg-purple-600/20">
-                <CheckCircle2 className="w-4 h-4 text-purple-500" />
+              <div className="flex -space-x-1">
+                <div className="p-1.5 rounded-lg bg-purple-600/20">
+                  <CheckCircle2 className="w-4 h-4 text-purple-500" />
+                </div>
+                {icalUrls.length > 0 && (
+                  <div className="p-1.5 rounded-lg bg-blue-600/20">
+                    <Calendar className="w-4 h-4 text-blue-500" />
+                  </div>
+                )}
               </div>
-              <h2 className="font-semibold text-sm md:text-base">Today&apos;s Routine</h2>
+              <h2 className="font-semibold text-sm md:text-base">Today</h2>
+              {calendarLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
             </div>
             <div className="flex items-center gap-3">
               {todaysChecklistItems.length > 0 && (
@@ -3006,188 +3066,257 @@ export default function HomePage() {
             </div>
           </button>
 
-          {/* Checklist Body */}
+          {/* Body: two columns when calendar is active */}
           {!isChecklistCollapsed && (
-            <div className={cn("px-3 md:px-4 pb-3 md:pb-4")}>
-              {todaysChecklistItems.length === 0 && !showChecklistForm ? (
-                <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                  <Circle className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">No routine items for today</p>
-                  <button
-                    onClick={() => setShowChecklistForm(true)}
-                    className="text-xs text-purple-500 hover:text-purple-400 mt-1"
-                  >
-                    Add your first routine
-                  </button>
-                </div>
-              ) : (
-                <div className="space-y-1">
-                  {todaysChecklistItems.map((item) => {
-                    const isCompleted = isChecklistItemCompletedToday(item);
-                    return (
-                      <div
-                        key={item._id}
-                        className={cn(
-                          "group flex items-center gap-3 py-2 px-2 rounded-lg transition-colors",
-                          isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
-                        )}
-                      >
-                        <button
-                          onClick={() => handleToggleChecklistItem(item._id)}
-                          className="flex-shrink-0"
-                        >
-                          {isCompleted ? (
-                            <CheckCircle2 className="w-5 h-5 text-purple-500" />
-                          ) : (
-                            <Circle className={cn("w-5 h-5", isDarkMode ? "text-gray-600" : "text-gray-300")} />
-                          )}
-                        </button>
-                        <span
-                          className={cn(
-                            "flex-1 text-sm transition-all",
-                            isCompleted && "line-through",
-                            isCompleted
-                              ? isDarkMode ? "text-gray-600" : "text-gray-400"
-                              : isDarkMode ? "text-gray-200" : "text-gray-700"
-                          )}
-                        >
-                          {item.title}
-                        </span>
-                        <span className={cn(
-                          "text-xs px-1.5 py-0.5 rounded",
-                          isDarkMode ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-400"
-                        )}>
-                          {item.frequency === "daily"
-                            ? "daily"
-                            : item.daysOfWeek?.map(d => DAY_LABELS[d]).join(", ")}
-                        </span>
-                        <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                          <button
-                            onClick={() => openChecklistItemForEdit(item)}
-                            className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
-                          >
-                            <Edit3 className="w-3.5 h-3.5" />
-                          </button>
-                          <button
-                            onClick={() => handleDeleteChecklistItem(item._id)}
-                            className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
-                          >
-                            <Trash2 className="w-3.5 h-3.5" />
-                          </button>
-                        </div>
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
+            <div className={cn(
+              "flex flex-col md:flex-row",
+              icalUrls.length > 0 && (isDarkMode ? "divide-y md:divide-y-0 md:divide-x divide-gray-800" : "divide-y md:divide-y-0 md:divide-x divide-gray-100")
+            )}>
 
-              {/* Add/Edit Form */}
-              {showChecklistForm ? (
-                <div className={cn(
-                  "mt-3 p-3 rounded-lg border space-y-3",
-                  isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
-                )}>
-                  <input
-                    type="text"
-                    placeholder="Routine item title..."
-                    value={checklistFormData.title}
-                    onChange={(e) => setChecklistFormData(prev => ({ ...prev, title: e.target.value }))}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && checklistFormData.title.trim()) {
-                        void (editingChecklistItem ? handleUpdateChecklistItem() : handleAddChecklistItem());
-                      }
-                    }}
-                    autoFocus
-                    className={cn(
-                      "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
-                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+              {/* Routine column */}
+              <div className={cn("px-3 md:px-4 pb-3 md:pb-4", icalUrls.length > 0 ? "md:w-2/3" : "w-full")}>
+                {todaysChecklistItems.length === 0 && !showChecklistForm ? (
+                  <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                    <Circle className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                    <p className="text-sm">No routine items for today</p>
+                    <button
+                      onClick={() => setShowChecklistForm(true)}
+                      className="text-xs text-purple-500 hover:text-purple-400 mt-1"
+                    >
+                      Add your first routine
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-1 mt-1">
+                    {todaysChecklistItems.map((item) => {
+                      const isCompleted = isChecklistItemCompletedToday(item);
+                      return (
+                        <div
+                          key={item._id}
+                          className={cn(
+                            "group flex items-center gap-3 py-2 px-2 rounded-lg transition-colors",
+                            isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
+                          )}
+                        >
+                          <button
+                            onClick={() => handleToggleChecklistItem(item._id)}
+                            className="flex-shrink-0"
+                          >
+                            {isCompleted ? (
+                              <CheckCircle2 className="w-5 h-5 text-purple-500" />
+                            ) : (
+                              <Circle className={cn("w-5 h-5", isDarkMode ? "text-gray-600" : "text-gray-300")} />
+                            )}
+                          </button>
+                          <span
+                            className={cn(
+                              "flex-1 text-sm transition-all",
+                              isCompleted && "line-through",
+                              isCompleted
+                                ? isDarkMode ? "text-gray-600" : "text-gray-400"
+                                : isDarkMode ? "text-gray-200" : "text-gray-700"
+                            )}
+                          >
+                            {item.title}
+                          </span>
+                          <span className={cn(
+                            "text-xs px-1.5 py-0.5 rounded",
+                            isDarkMode ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-400"
+                          )}>
+                            {item.frequency === "daily"
+                              ? "daily"
+                              : item.daysOfWeek?.map(d => DAY_LABELS[d]).join(", ")}
+                          </span>
+                          <div className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <button
+                              onClick={() => openChecklistItemForEdit(item)}
+                              className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => handleDeleteChecklistItem(item._id)}
+                              className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Add/Edit Form */}
+                {showChecklistForm ? (
+                  <div className={cn(
+                    "mt-3 p-3 rounded-lg border space-y-3",
+                    isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
+                  )}>
+                    <input
+                      type="text"
+                      placeholder="Routine item title..."
+                      value={checklistFormData.title}
+                      onChange={(e) => setChecklistFormData(prev => ({ ...prev, title: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && checklistFormData.title.trim()) {
+                          void (editingChecklistItem ? handleUpdateChecklistItem() : handleAddChecklistItem());
+                        }
+                      }}
+                      autoFocus
+                      className={cn(
+                        "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
+                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      )}
+                    />
+                    {/* Frequency Toggle */}
+                    <div className="flex items-center gap-2">
+                      <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Frequency:</span>
+                      <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
+                        <button
+                          onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "daily", daysOfWeek: [] }))}
+                          className={cn(
+                            "px-3 py-1 text-xs rounded-md font-medium transition-colors",
+                            checklistFormData.frequency === "daily"
+                              ? "bg-purple-600 text-white"
+                              : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                          )}
+                        >
+                          Daily
+                        </button>
+                        <button
+                          onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "weekly" }))}
+                          className={cn(
+                            "px-3 py-1 text-xs rounded-md font-medium transition-colors",
+                            checklistFormData.frequency === "weekly"
+                              ? "bg-purple-600 text-white"
+                              : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                          )}
+                        >
+                          Weekly
+                        </button>
+                      </div>
+                    </div>
+                    {/* Day of Week Selector */}
+                    {checklistFormData.frequency === "weekly" && (
+                      <div className="flex items-center gap-1.5">
+                        {DAY_LABELS.map((label, i) => (
+                          <button
+                            key={label}
+                            onClick={() => {
+                              setChecklistFormData(prev => ({
+                                ...prev,
+                                daysOfWeek: prev.daysOfWeek.includes(i)
+                                  ? prev.daysOfWeek.filter(d => d !== i)
+                                  : [...prev.daysOfWeek, i],
+                              }));
+                            }}
+                            className={cn(
+                              "w-8 h-8 rounded-full text-xs font-medium transition-colors",
+                              checklistFormData.daysOfWeek.includes(i)
+                                ? "bg-purple-600 text-white"
+                                : isDarkMode ? "bg-gray-700 text-gray-400 hover:bg-gray-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+                            )}
+                          >
+                            {label.charAt(0)}
+                          </button>
+                        ))}
+                      </div>
                     )}
-                  />
-                  {/* Frequency Toggle */}
-                  <div className="flex items-center gap-2">
-                    <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Frequency:</span>
-                    <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
+                    {/* Form Actions */}
+                    <div className="flex gap-2">
                       <button
-                        onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "daily", daysOfWeek: [] }))}
+                        onClick={resetChecklistForm}
                         className={cn(
-                          "px-3 py-1 text-xs rounded-md font-medium transition-colors",
-                          checklistFormData.frequency === "daily"
-                            ? "bg-purple-600 text-white"
-                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                          "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                          isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
                         )}
                       >
-                        Daily
+                        Cancel
                       </button>
                       <button
-                        onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "weekly" }))}
-                        className={cn(
-                          "px-3 py-1 text-xs rounded-md font-medium transition-colors",
-                          checklistFormData.frequency === "weekly"
-                            ? "bg-purple-600 text-white"
-                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                        )}
+                        onClick={editingChecklistItem ? handleUpdateChecklistItem : handleAddChecklistItem}
+                        disabled={!checklistFormData.title.trim() || checklistLoading || (checklistFormData.frequency === "weekly" && checklistFormData.daysOfWeek.length === 0)}
+                        className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
                       >
-                        Weekly
+                        {checklistLoading ? "Saving..." : editingChecklistItem ? "Update" : "Add"}
                       </button>
                     </div>
                   </div>
-                  {/* Day of Week Selector */}
-                  {checklistFormData.frequency === "weekly" && (
-                    <div className="flex items-center gap-1.5">
-                      {DAY_LABELS.map((label, i) => (
-                        <button
-                          key={label}
-                          onClick={() => {
-                            setChecklistFormData(prev => ({
-                              ...prev,
-                              daysOfWeek: prev.daysOfWeek.includes(i)
-                                ? prev.daysOfWeek.filter(d => d !== i)
-                                : [...prev.daysOfWeek, i],
-                            }));
-                          }}
-                          className={cn(
-                            "w-8 h-8 rounded-full text-xs font-medium transition-colors",
-                            checklistFormData.daysOfWeek.includes(i)
-                              ? "bg-purple-600 text-white"
-                              : isDarkMode ? "bg-gray-700 text-gray-400 hover:bg-gray-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
+                ) : todaysChecklistItems.length > 0 && (
+                  <button
+                    onClick={() => setShowChecklistForm(true)}
+                    className={cn(
+                      "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
+                      isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                    )}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add routine item
+                  </button>
+                )}
+              </div>
+
+              {/* Calendar Events column */}
+              {icalUrls.length > 0 && (
+                <div className="px-3 md:px-4 pb-3 md:pb-4 pt-2 md:w-1/3">
+                  {calendarLoading && calendarGroups.length === 0 ? (
+                    <div className="space-y-2 py-2">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className={cn("h-12 rounded-lg animate-pulse", isDarkMode ? "bg-gray-800" : "bg-gray-100")} />
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="space-y-4 mt-1">
+                      {calendarGroups.map((group, gi) => (
+                        <div key={gi}>
+                          <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1.5 px-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                            {group.name}
+                          </p>
+                          {group.events.length === 0 ? (
+                            <p className={cn("text-xs px-1 py-2", group.error ? "text-red-400" : isDarkMode ? "text-gray-600" : "text-gray-400")}>
+                              {group.error ? "Could not load — check URL in Settings" : "No events today"}
+                            </p>
+                          ) : (
+                            <div className="space-y-1.5">
+                              {group.events.map((event) => {
+                                const startDate = new Date(event.start);
+                                const endDate = new Date(event.end);
+                                const timeStr = event.allDay
+                                  ? "All day"
+                                  : `${startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} – ${endDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+                                return (
+                                  <div
+                                    key={event.id}
+                                    className={cn(
+                                      "flex items-start gap-2.5 px-3 py-2.5 rounded-lg border-l-2 border-blue-500",
+                                      isDarkMode ? "bg-gray-800/60" : "bg-blue-50/60"
+                                    )}
+                                  >
+                                    <div className="flex-1 min-w-0">
+                                      <p className={cn("text-sm font-medium truncate", isDarkMode ? "text-gray-100" : "text-gray-800")}>
+                                        {event.title}
+                                      </p>
+                                      <p className={cn("text-xs mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-500")}>
+                                        {timeStr}
+                                      </p>
+                                      {event.location && (
+                                        <p className={cn("text-xs truncate mt-0.5", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                                          <MapPin className="w-2.5 h-2.5 inline mr-0.5 -mt-px" />
+                                          {event.location}
+                                        </p>
+                                      )}
+                                    </div>
+                                  </div>
+                                );
+                              })}
+                            </div>
                           )}
-                        >
-                          {label.charAt(0)}
-                        </button>
+                        </div>
                       ))}
                     </div>
                   )}
-                  {/* Form Actions */}
-                  <div className="flex gap-2">
-                    <button
-                      onClick={resetChecklistForm}
-                      className={cn(
-                        "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                        isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
-                      )}
-                    >
-                      Cancel
-                    </button>
-                    <button
-                      onClick={editingChecklistItem ? handleUpdateChecklistItem : handleAddChecklistItem}
-                      disabled={!checklistFormData.title.trim() || checklistLoading || (checklistFormData.frequency === "weekly" && checklistFormData.daysOfWeek.length === 0)}
-                      className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
-                    >
-                      {checklistLoading ? "Saving..." : editingChecklistItem ? "Update" : "Add"}
-                    </button>
-                  </div>
                 </div>
-              ) : todaysChecklistItems.length > 0 && (
-                <button
-                  onClick={() => setShowChecklistForm(true)}
-                  className={cn(
-                    "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
-                    isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                  )}
-                >
-                  <Plus className="w-3.5 h-3.5" />
-                  Add routine item
-                </button>
               )}
             </div>
           )}
@@ -3851,58 +3980,146 @@ export default function HomePage() {
 
             <Dialog.Description className="sr-only">Application settings</Dialog.Description>
 
-            <div className="space-y-4">
-              <div>
-                <label className={cn("block text-sm font-medium mb-1.5", isDarkMode ? "text-gray-300" : "text-gray-700")}>
-                  Google Gemini API Key
-                </label>
-                <p className={cn("text-xs mb-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                  Used for AI clothing suggestions. Get a free key at{" "}
-                  <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
-                    aistudio.google.com
-                  </a>
-                </p>
-                <input
-                  type="password"
-                  value={settingsKeyInput}
-                  onChange={(e) => setSettingsKeyInput(e.target.value)}
-                  placeholder="AIza..."
-                  className={cn(
-                    "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm",
-                    isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+            <div className="space-y-6">
+              {/* Gemini API Key */}
+              <div className="space-y-3">
+                <div>
+                  <label className={cn("block text-sm font-medium mb-1.5", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    Google Gemini API Key
+                  </label>
+                  <p className={cn("text-xs mb-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                    Used for AI clothing suggestions. Get a free key at{" "}
+                    <a href="https://aistudio.google.com/apikey" target="_blank" rel="noopener noreferrer" className="text-blue-500 hover:underline">
+                      aistudio.google.com
+                    </a>
+                  </p>
+                  <input
+                    type="password"
+                    value={settingsKeyInput}
+                    onChange={(e) => setSettingsKeyInput(e.target.value)}
+                    placeholder="AIza..."
+                    className={cn(
+                      "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 text-sm",
+                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                    )}
+                  />
+                </div>
+                <div className="flex gap-2">
+                  {geminiApiKey && (
+                    <button
+                      onClick={() => {
+                        setGeminiApiKey("");
+                        setSettingsKeyInput("");
+                        safeRemoveItem("eisenq-gemini-api-key");
+                        setClothingSuggestion("");
+                      }}
+                      className={cn(
+                        "flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-colors text-red-400",
+                        isDarkMode ? "bg-red-500/10 hover:bg-red-500/20" : "bg-red-50 hover:bg-red-100"
+                      )}
+                    >
+                      Remove Key
+                    </button>
                   )}
-                />
-              </div>
-              <div className="flex gap-2 pt-2">
-                {geminiApiKey && (
                   <button
                     onClick={() => {
-                      setGeminiApiKey("");
-                      setSettingsKeyInput("");
-                      safeRemoveItem("eisenq-gemini-api-key");
-                      setClothingSuggestion("");
+                      const trimmed = settingsKeyInput.trim();
+                      if (trimmed) {
+                        setGeminiApiKey(trimmed);
+                        safeSetItem("eisenq-gemini-api-key", trimmed);
+                      }
+                      setIsSettingsOpen(false);
                     }}
-                    className={cn(
-                      "flex-1 px-3 py-2 rounded-lg font-medium text-sm transition-colors text-red-400",
-                      isDarkMode ? "bg-red-500/10 hover:bg-red-500/20" : "bg-red-50 hover:bg-red-100"
-                    )}
+                    className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition-colors"
                   >
-                    Remove Key
+                    Save
                   </button>
+                </div>
+              </div>
+
+              {/* Divider */}
+              <div className={cn("border-t", isDarkMode ? "border-gray-700" : "border-gray-200")} />
+
+              {/* iCal Calendar Feeds */}
+              <div>
+                <label className={cn("block text-sm font-medium mb-1.5", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  Calendar Feeds (iCal)
+                </label>
+                <p className={cn("text-xs mb-3", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                  Add .ics feed URLs from Google Calendar, Apple Calendar, Outlook, or any iCal source.
+                  Today&apos;s events will appear next to your routine.{" "}
+                  For Google Calendar, use the <strong>Secret address in iCal format</strong> (Settings → calendar → Integrate calendar) — not the public URL.
+                </p>
+                {/* Existing URLs */}
+                {icalUrls.length > 0 && (
+                  <div className="space-y-1.5 mb-3">
+                    {icalUrls.map((url, i) => (
+                      <div key={i} className={cn("flex items-center gap-2 px-3 py-2 rounded-lg text-xs", isDarkMode ? "bg-gray-800" : "bg-gray-50")}>
+                        <Calendar className={cn("w-3.5 h-3.5 flex-shrink-0", isDarkMode ? "text-gray-400" : "text-gray-500")} />
+                        <span className={cn("flex-1 truncate font-mono", isDarkMode ? "text-gray-300" : "text-gray-700")}>{url}</span>
+                        <button
+                          onClick={() => {
+                            const next = icalUrls.filter((_, j) => j !== i);
+                            setIcalUrls(next);
+                            safeSetItem("eisenq-ical-urls", JSON.stringify(next));
+                            if (!next.length) setCalendarGroups([]);
+                          }}
+                          className={cn("flex-shrink-0 p-1 rounded transition-colors text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
+                          aria-label="Remove calendar feed"
+                        >
+                          <Trash2 className="w-3.5 h-3.5" />
+                        </button>
+                      </div>
+                    ))}
+                  </div>
                 )}
-                <button
-                  onClick={() => {
-                    const trimmed = settingsKeyInput.trim();
-                    if (trimmed) {
-                      setGeminiApiKey(trimmed);
-                      safeSetItem("eisenq-gemini-api-key", trimmed);
-                    }
-                    setIsSettingsOpen(false);
-                  }}
-                  className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg font-medium text-sm hover:bg-blue-700 transition-colors"
-                >
-                  Save
-                </button>
+                {/* Add new URL */}
+                <div className="space-y-1.5">
+                  <div className="flex gap-2">
+                    <input
+                      type="text"
+                      value={settingsIcalInput}
+                      onChange={(e) => { setSettingsIcalInput(e.target.value); setSettingsIcalError(""); }}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter") {
+                          const trimmed = settingsIcalInput.trim();
+                          if (!trimmed) return;
+                          if (icalUrls.includes(trimmed)) { setSettingsIcalError("This URL is already added."); return; }
+                          const next = [...icalUrls, trimmed];
+                          setIcalUrls(next);
+                          safeSetItem("eisenq-ical-urls", JSON.stringify(next));
+                          setSettingsIcalInput("");
+                          setSettingsIcalError("");
+                        }
+                      }}
+                      placeholder="https://calendar.google.com/...ical/..."
+                      className={cn(
+                        "flex-1 px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 text-sm",
+                        settingsIcalError ? "border-red-400 focus:ring-red-400" : "focus:ring-blue-500",
+                        isDarkMode ? "bg-gray-800 border-gray-700 text-white placeholder-gray-600" : "bg-white border-gray-300 placeholder-gray-400"
+                      )}
+                    />
+                    <button
+                      onClick={() => {
+                        const trimmed = settingsIcalInput.trim();
+                        if (!trimmed) return;
+                        if (icalUrls.includes(trimmed)) { setSettingsIcalError("This URL is already added."); return; }
+                        const next = [...icalUrls, trimmed];
+                        setIcalUrls(next);
+                        safeSetItem("eisenq-ical-urls", JSON.stringify(next));
+                        setSettingsIcalInput("");
+                        setSettingsIcalError("");
+                      }}
+                      disabled={!settingsIcalInput.trim()}
+                      className="px-3 py-2 bg-blue-600 text-white rounded-lg text-sm font-medium hover:bg-blue-700 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+                    >
+                      Add
+                    </button>
+                  </div>
+                  {settingsIcalError && (
+                    <p className="text-xs text-red-400">{settingsIcalError}</p>
+                  )}
+                </div>
               </div>
             </div>
           </Dialog.Content>

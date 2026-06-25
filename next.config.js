@@ -6,6 +6,9 @@ import "./src/env.js";
 
 /** @type {import("next").NextConfig} */
 const config = {
+  // Prevent Turbopack/webpack from bundling node-ical (uses Node.js native APIs)
+  serverExternalPackages: ["node-ical"],
+
   // Disable source maps in production to avoid exposing code
   productionBrowserSourceMaps: false,
 
