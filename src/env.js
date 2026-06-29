@@ -8,6 +8,9 @@ export const env = createEnv({
    */
   server: {
     DATABASE_URL: z.string().url(),
+    SETTINGS_ENCRYPTION_KEY: z
+      .string()
+      .regex(/^[0-9a-fA-F]{64}$/, "SETTINGS_ENCRYPTION_KEY must be 64 hex chars (32 bytes)"),
     NODE_ENV: z
       .enum(["development", "test", "production"])
       .default("development"),
@@ -28,6 +31,7 @@ export const env = createEnv({
    */
   runtimeEnv: {
     DATABASE_URL: process.env.DATABASE_URL,
+    SETTINGS_ENCRYPTION_KEY: process.env.SETTINGS_ENCRYPTION_KEY,
     NODE_ENV: process.env.NODE_ENV,
     // NEXT_PUBLIC_CLIENTVAR: process.env.NEXT_PUBLIC_CLIENTVAR,
   },

@@ -754,7 +754,8 @@ export default function HomePage() {
     }
   }, []);
 
-  // Initialize weather location, Gemini API key, and iCal URLs from localStorage
+  // Initialize weather location, Gemini API key, and iCal URLs.
+  // localStorage is a fast cache; the encrypted DB (via /api/settings) is the source of truth.
   useEffect(() => {
     const stored = safeGetItem("eisenq-weather-location");
     if (stored) setWeatherLocation(stored);
@@ -764,6 +765,34 @@ export default function HomePage() {
     if (storedUrls) {
       try { setIcalUrls(JSON.parse(storedUrls) as string[]); } catch { /* ignore */ }
     }
+
+    // Hydrate from the server and refresh the cache.
+    void (async () => {
+      try {
+        const res = await fetch("/api/settings");
+        if (!res.ok) return;
+        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[] };
+        if (typeof data.geminiApiKey === "string") {
+          setGeminiApiKey(data.geminiApiKey);
+          if (data.geminiApiKey) safeSetItem("eisenq-gemini-api-key", data.geminiApiKey);
+          else safeRemoveItem("eisenq-gemini-api-key");
+        }
+        if (Array.isArray(data.icalUrls)) {
+          setIcalUrls(data.icalUrls);
+          safeSetItem("eisenq-ical-urls", JSON.stringify(data.icalUrls));
+        }
+      } catch { /* offline — keep cached values */ }
+    })();
+  }, []);
+
+  // Persist settings to the encrypted DB. localStorage cache is updated by callers
+  // for instant reads; this fire-and-forget call keeps the server in sync.
+  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[] }) => {
+    void fetch("/api/settings", {
+      method: "PUT",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(partial),
+    }).catch(() => { /* ignore — cache still holds the value */ });
   }, []);
 
   // Lock body scroll when any modal/drawer is open
@@ -4496,6 +4525,7 @@ export default function HomePage() {
                         setGeminiApiKey("");
                         setSettingsKeyInput("");
                         safeRemoveItem("eisenq-gemini-api-key");
+                        persistSettings({ geminiApiKey: "" });
                         setClothingSuggestion("");
                       }}
                       className={cn(
@@ -4512,6 +4542,7 @@ export default function HomePage() {
                       if (trimmed) {
                         setGeminiApiKey(trimmed);
                         safeSetItem("eisenq-gemini-api-key", trimmed);
+                        persistSettings({ geminiApiKey: trimmed });
                       }
                       setIsSettingsOpen(false);
                     }}
@@ -4547,6 +4578,7 @@ export default function HomePage() {
                             const next = icalUrls.filter((_, j) => j !== i);
                             setIcalUrls(next);
                             safeSetItem("eisenq-ical-urls", JSON.stringify(next));
+                            persistSettings({ icalUrls: next });
                             if (!next.length) setCalendarGroups([]);
                           }}
                           className={cn("flex-shrink-0 p-1 rounded transition-colors text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
@@ -4573,6 +4605,7 @@ export default function HomePage() {
                           const next = [...icalUrls, trimmed];
                           setIcalUrls(next);
                           safeSetItem("eisenq-ical-urls", JSON.stringify(next));
+                          persistSettings({ icalUrls: next });
                           setSettingsIcalInput("");
                           setSettingsIcalError("");
                         }
@@ -4592,6 +4625,7 @@ export default function HomePage() {
                         const next = [...icalUrls, trimmed];
                         setIcalUrls(next);
                         safeSetItem("eisenq-ical-urls", JSON.stringify(next));
+                        persistSettings({ icalUrls: next });
                         setSettingsIcalInput("");
                         setSettingsIcalError("");
                       }}

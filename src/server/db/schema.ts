@@ -59,9 +59,19 @@ export interface MaintenanceItem {
   updatedAt: Date;
 }
 
+export interface UserSettings {
+  _id?: ObjectId;
+  userId: string;
+  geminiApiKeyEnc?: string;  // AES-256-GCM encrypted Gemini API key
+  icalUrlsEnc?: string;      // AES-256-GCM encrypted JSON array of iCal URLs
+  createdAt: Date;
+  updatedAt: Date;
+}
+
 export const collections = {
   tasks: "tasks",
   routineTasks: "routineTasks",
   checklistItems: "checklistItems",
   maintenanceItems: "maintenanceItems",
+  userSettings: "userSettings",
 } as const;
