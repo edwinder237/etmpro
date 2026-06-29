@@ -23,7 +23,7 @@ export function Benefits() {
     {
       icon: RefreshCw,
       title: "Build Better Habits",
-      description: "Create routine tasks for recurring activities. Build consistency and never forget important regular tasks.",
+      description: "Track daily and weekly routines. Build consistency and never forget important regular tasks.",
       color: "from-green-500 to-emerald-500",
     },
   ];

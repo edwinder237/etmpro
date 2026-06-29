@@ -1,5 +1,5 @@
 import Image from "next/image";
-import { CheckCircle, Target, Calendar, Repeat, BarChart3, Zap } from "lucide-react";
+import { CheckCircle, Target, Calendar, BarChart3, Zap } from "lucide-react";
 
 export function Features() {
   const features = [
@@ -16,13 +16,6 @@ export function Features() {
       description: "Plan your day, week, or month with an integrated calendar view for scheduled tasks.",
       color: "text-yellow-500",
       bgColor: "bg-yellow-500/10",
-    },
-    {
-      icon: Repeat,
-      title: "Routine Tasks",
-      description: "Create templates for recurring tasks and add them to your matrix with a single click.",
-      color: "text-blue-500",
-      bgColor: "bg-blue-500/10",
     },
     {
       icon: BarChart3,

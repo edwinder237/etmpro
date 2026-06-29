@@ -76,7 +76,7 @@ import {
 } from "date-fns";
 import { format } from "date-fns";
 import { cn } from "~/lib/utils";
-import { addToCalendar } from "~/lib/calendar-export";
+import { addToCalendar, type CalendarProvider } from "~/lib/calendar-export";
 import toast, { Toaster } from "react-hot-toast";
 import { UserButton } from "@clerk/nextjs";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
@@ -107,18 +107,6 @@ interface Task {
   subtaskCompletedCount?: number;
 }
 
-interface RoutineTask {
-  _id: string;
-  title: string;
-  description?: string;
-  quadrant: TaskQuadrant;
-  priority: TaskPriority;
-  duration?: number;
-  usageCount?: number;
-  lastUsedAt?: string;
-  createdAt: string;
-  updatedAt: string;
-}
 
 type ChecklistFrequency = "daily" | "weekly";
 
@@ -435,19 +423,6 @@ export default function HomePage() {
   const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
   const [isDeleting, setIsDeleting] = useState(false);
 
-  // Routine tasks state
-  const [routineTasks, setRoutineTasks] = useState<RoutineTask[]>([]);
-  const [isRoutineDrawerOpen, setIsRoutineDrawerOpen] = useState(false);
-  const [editingRoutineTask, setEditingRoutineTask] = useState<RoutineTask | null>(null);
-  const [routineTaskLoading, setRoutineTaskLoading] = useState(false);
-  const [routineFormData, setRoutineFormData] = useState({
-    title: "",
-    description: "",
-    quadrant: "urgent-important" as TaskQuadrant,
-    priority: "medium" as TaskPriority,
-    duration: "" as number | "",
-  });
-
   // Settings state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
@@ -680,6 +655,45 @@ export default function HomePage() {
     }
   };
 
+  // Quick-sync a scheduled task to an external calendar, straight from its card.
+  const exportTaskToCalendar = (task: Task, provider: CalendarProvider) => {
+    if (!task.dueDate) return;
+    const startDate = new Date(task.dueDate);
+    const endDate = new Date(startDate.getTime() + (task.duration ?? 30) * 60 * 1000);
+    addToCalendar({ title: task.title, description: task.description, startDate, endDate }, provider);
+    const messages: Record<CalendarProvider, string> = {
+      google: "Opening Google Calendar",
+      outlook: "Opening Outlook Calendar",
+      office365: "Opening Office 365 Calendar",
+      yahoo: "Opening Yahoo Calendar",
+      ics: "Downloading .ics file",
+    };
+    toast.success(messages[provider]);
+  };
+
+  // Reschedule an overdue task to tomorrow, keeping its original time of day.
+  const rescheduleTaskToTomorrow = async (task: Task) => {
+    const base = task.dueDate ? new Date(task.dueDate) : new Date();
+    const tomorrow = addDays(new Date(), 1);
+    tomorrow.setHours(base.getHours(), base.getMinutes(), 0, 0);
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: task._id, dueDate: tomorrow.toISOString() }),
+      });
+      if (response.ok) {
+        const updatedTask = await response.json() as Task;
+        setTasks(prev => prev.map(t => t._id === updatedTask._id ? updatedTask : t));
+        toast.success("Rescheduled to tomorrow");
+      } else {
+        toast.error("Failed to reschedule");
+      }
+    } catch {
+      toast.error("Error rescheduling task");
+    }
+  };
+
   // Helper functions for calendar
   const getTasksForDate = (date: Date) => {
     return tasks.filter(task => {
@@ -739,7 +753,6 @@ export default function HomePage() {
 
   useEffect(() => {
     void fetchTasks();
-    void fetchRoutineTasks();
     void fetchChecklistItems();
     void fetchMaintenanceItems();
   }, []);
@@ -817,7 +830,7 @@ export default function HomePage() {
 
   // Lock body scroll when any modal/drawer is open
   useEffect(() => {
-    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || statsDrawerType !== null || isRoutineDrawerOpen;
+    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || statsDrawerType !== null;
 
     if (isAnyModalOpen) {
       document.body.style.overflow = 'hidden';
@@ -828,7 +841,7 @@ export default function HomePage() {
     return () => {
       document.body.style.overflow = '';
     };
-  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, statsDrawerType, isRoutineDrawerOpen]);
+  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, statsDrawerType]);
 
   const fetchTasks = async () => {
     try {
@@ -844,18 +857,6 @@ export default function HomePage() {
       toast.error("Error loading tasks");
     } finally {
       setIsLoading(false);
-    }
-  };
-
-  const fetchRoutineTasks = async () => {
-    try {
-      const response = await fetch("/api/routine-tasks");
-      if (response.ok) {
-        const data = await response.json() as RoutineTask[];
-        setRoutineTasks(data);
-      }
-    } catch {
-      // Silently fail - routine tasks are optional
     }
   };
 
@@ -1842,144 +1843,6 @@ export default function HomePage() {
     }
   };
 
-  // Routine task handlers
-  const handleAddRoutineTask = async () => {
-    if (!routineFormData.title.trim()) return;
-
-    try {
-      setRoutineTaskLoading(true);
-      const response = await fetch("/api/routine-tasks", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          title: routineFormData.title,
-          description: routineFormData.description,
-          quadrant: routineFormData.quadrant,
-          priority: routineFormData.priority,
-          duration: routineFormData.duration || undefined
-        })
-      });
-
-      if (response.ok) {
-        const newRoutineTask = await response.json() as RoutineTask;
-        setRoutineTasks(prev => [newRoutineTask, ...prev]);
-        resetRoutineFormState();
-        toast.success("Routine task created!");
-      } else {
-        toast.error("Failed to create routine task");
-      }
-    } catch {
-      toast.error("Error creating routine task");
-    } finally {
-      setRoutineTaskLoading(false);
-    }
-  };
-
-  const handleUpdateRoutineTask = async () => {
-    if (!editingRoutineTask || !routineFormData.title.trim()) return;
-
-    try {
-      setRoutineTaskLoading(true);
-      const response = await fetch("/api/routine-tasks", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          _id: editingRoutineTask._id,
-          title: routineFormData.title,
-          description: routineFormData.description,
-          quadrant: routineFormData.quadrant,
-          priority: routineFormData.priority,
-          duration: routineFormData.duration || null
-        })
-      });
-
-      if (response.ok) {
-        const updatedRoutineTask = await response.json() as RoutineTask;
-        setRoutineTasks(prev => prev.map(rt =>
-          rt._id === updatedRoutineTask._id ? updatedRoutineTask : rt
-        ));
-        resetRoutineFormState();
-        toast.success("Routine task updated!");
-      } else {
-        toast.error("Failed to update routine task");
-      }
-    } catch {
-      toast.error("Error updating routine task");
-    } finally {
-      setRoutineTaskLoading(false);
-    }
-  };
-
-  const handleDeleteRoutineTask = async (id: string) => {
-    try {
-      setRoutineTaskLoading(true);
-      const response = await fetch(`/api/routine-tasks?id=${id}`, {
-        method: "DELETE"
-      });
-
-      if (response.ok) {
-        setRoutineTasks(prev => prev.filter(rt => rt._id !== id));
-        toast.success("Routine task deleted!");
-      } else {
-        toast.error("Failed to delete routine task");
-      }
-    } catch {
-      toast.error("Error deleting routine task");
-    } finally {
-      setRoutineTaskLoading(false);
-    }
-  };
-
-  const incrementRoutineTaskUsage = async (id: string) => {
-    try {
-      await fetch(`/api/routine-tasks?id=${id}`, {
-        method: "PATCH"
-      });
-      // Update local state
-      setRoutineTasks(prev => prev.map(rt =>
-        rt._id === id
-          ? { ...rt, usageCount: (rt.usageCount ?? 0) + 1, lastUsedAt: new Date().toISOString() }
-          : rt
-      ));
-    } catch {
-      // Silently fail - usage tracking is not critical
-    }
-  };
-
-  const resetRoutineFormState = () => {
-    setRoutineFormData({
-      title: "",
-      description: "",
-      quadrant: "urgent-important",
-      priority: "medium",
-      duration: ""
-    });
-    setEditingRoutineTask(null);
-  };
-
-  const openRoutineTaskForEdit = (routineTask: RoutineTask) => {
-    setEditingRoutineTask(routineTask);
-    setRoutineFormData({
-      title: routineTask.title,
-      description: routineTask.description ?? "",
-      quadrant: routineTask.quadrant,
-      priority: routineTask.priority,
-      duration: routineTask.duration ?? ""
-    });
-  };
-
-  const applyRoutineTaskToForm = (routineTask: RoutineTask) => {
-    setFormData(prev => ({
-      ...prev,
-      title: routineTask.title,
-      description: routineTask.description ?? "",
-      quadrant: routineTask.quadrant,
-      priority: routineTask.priority,
-      duration: routineTask.duration ?? ""
-    }));
-    void incrementRoutineTaskUsage(routineTask._id);
-  };
-
   const resetFormState = () => {
     setFormData({
       title: "",
@@ -2211,14 +2074,6 @@ export default function HomePage() {
                 title="Task Planning Calendar"
               >
                 <CalendarDays className="w-5 h-5" />
-              </button>
-
-              <button
-                onClick={() => setIsRoutineDrawerOpen(true)}
-                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
-                title="Routine Tasks"
-              >
-                <Repeat className="w-5 h-5" />
               </button>
 
               <button
@@ -3195,11 +3050,14 @@ export default function HomePage() {
                   </label>
                   <input
                     type="date"
+                    min={format(new Date(), "yyyy-MM-dd")}
                     value={format(calendarTaskForm.date, "yyyy-MM-dd")}
                     onChange={(e) => {
                       // Parse date parts to avoid timezone shift issues
                       const [year, month, day] = e.target.value.split('-').map(Number);
                       const newDate = new Date(year ?? 2025, (month ?? 1) - 1, day ?? 1, 12, 0, 0);
+                      // Ignore past dates — scheduling is forward-only
+                      if (newDate < startOfDay(new Date())) return;
                       setCalendarTaskForm(prev => ({ ...prev, date: newDate }));
                     }}
                     className={cn(
@@ -4135,14 +3993,20 @@ export default function HomePage() {
                       </p>
                     </div>
                   ) : (
-                    quadrantTasks.map((task) => (
+                    quadrantTasks.map((task) => {
+                      const taskOverdue = !!task.dueDate && task.status !== "completed" && new Date(task.dueDate) < startOfDay(new Date());
+                      return (
                       <div
                         key={task._id}
                         className={cn(
                           "p-2 md:p-3 rounded-lg border transition-all",
-                          darkMode 
-                            ? "bg-gray-800 border-gray-700 hover:border-gray-600" 
-                            : "bg-gray-50 border-gray-200 hover:border-gray-300"
+                          taskOverdue
+                            ? darkMode
+                              ? "bg-gray-800 border-red-500/40 hover:border-red-500/60"
+                              : "bg-gray-50 border-red-300 hover:border-red-400"
+                            : darkMode
+                              ? "bg-gray-800 border-gray-700 hover:border-gray-600"
+                              : "bg-gray-50 border-gray-200 hover:border-gray-300"
                         )}
                       >
                         <div className="flex items-start justify-between">
@@ -4189,9 +4053,34 @@ export default function HomePage() {
                                   </span>
                                 )}
                                 {task.dueDate ? (
-                                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                    {format(new Date(task.dueDate), "MMM dd")} • {format(new Date(task.dueDate), "HH:mm")}
-                                  </span>
+                                  <>
+                                    <span className={cn(
+                                      "text-xs",
+                                      taskOverdue ? "text-red-500 font-medium" : isDarkMode ? "text-gray-500" : "text-gray-400"
+                                    )}>
+                                      {format(new Date(task.dueDate), "MMM dd")} • {format(new Date(task.dueDate), "HH:mm")}
+                                    </span>
+                                    {taskOverdue && (
+                                      <>
+                                        <span className="text-xs px-2 py-0.5 rounded flex items-center gap-1 bg-red-500/20 text-red-500">
+                                          <AlertCircle className="w-3 h-3" />
+                                          Overdue
+                                        </span>
+                                        <button
+                                          onClick={(e) => { e.stopPropagation(); void rescheduleTaskToTomorrow(task); }}
+                                          className={cn(
+                                            "text-xs px-2 py-0.5 rounded flex items-center gap-1 transition-colors",
+                                            darkMode
+                                              ? "bg-blue-600/20 text-blue-400 hover:bg-blue-600/30"
+                                              : "bg-blue-100 text-blue-700 hover:bg-blue-200"
+                                          )}
+                                        >
+                                          <Calendar className="w-3 h-3" />
+                                          Reschedule
+                                        </button>
+                                      </>
+                                    )}
+                                  </>
                                 ) : task.quadrant === "important-not-urgent" ? (
                                   <button
                                     onClick={() => void openTaskForEdit(task)}
@@ -4226,6 +4115,60 @@ export default function HomePage() {
                             </div>
                           </div>
                           <div className="flex items-center gap-1">
+                            {task.dueDate && (
+                              <DropdownMenu.Root>
+                                <DropdownMenu.Trigger asChild>
+                                  <button
+                                    title="Sync to calendar"
+                                    className={cn(
+                                      "p-1 md:p-1.5 rounded text-green-500",
+                                      isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"
+                                    )}
+                                  >
+                                    <Share2 className="w-3 h-3 md:w-4 md:h-4" />
+                                  </button>
+                                </DropdownMenu.Trigger>
+                                <DropdownMenu.Portal>
+                                  <DropdownMenu.Content
+                                    className={cn(
+                                      "min-w-[180px] rounded-lg p-1.5 shadow-lg z-[200]",
+                                      isDarkMode ? "bg-gray-800 border border-gray-700" : "bg-white border border-gray-200"
+                                    )}
+                                    sideOffset={5}
+                                  >
+                                    {([
+                                      { provider: "google", label: "Google Calendar", color: "text-red-500" },
+                                      { provider: "outlook", label: "Outlook.com", color: "text-blue-500" },
+                                      { provider: "office365", label: "Office 365", color: "text-blue-600" },
+                                      { provider: "yahoo", label: "Yahoo Calendar", color: "text-purple-500" },
+                                    ] as const).map((item) => (
+                                      <DropdownMenu.Item
+                                        key={item.provider}
+                                        className={cn(
+                                          "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
+                                          isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                                        )}
+                                        onSelect={() => exportTaskToCalendar(task, item.provider)}
+                                      >
+                                        <Calendar className={cn("w-4 h-4", item.color)} />
+                                        {item.label}
+                                      </DropdownMenu.Item>
+                                    ))}
+                                    <DropdownMenu.Separator className={cn("h-px my-1", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
+                                    <DropdownMenu.Item
+                                      className={cn(
+                                        "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
+                                        isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                                      )}
+                                      onSelect={() => exportTaskToCalendar(task, "ics")}
+                                    >
+                                      <Download className="w-4 h-4 text-gray-500" />
+                                      Download .ics
+                                    </DropdownMenu.Item>
+                                  </DropdownMenu.Content>
+                                </DropdownMenu.Portal>
+                              </DropdownMenu.Root>
+                            )}
                             <button
                               onClick={() => handleDeleteTask(task._id)}
                               disabled={taskOperationLoading[`delete-${task._id}`]}
@@ -4299,7 +4242,8 @@ export default function HomePage() {
                           </div>
                         </div>
                       </div>
-                    ))
+                      );
+                    })
                   )}
                 </div>
 
@@ -4386,41 +4330,6 @@ export default function HomePage() {
                       : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
                   )}
                 />
-                {/* Routine Task Suggestions */}
-                {!editingTask && routineTasks.length > 0 && (
-                  <div className="mt-2">
-                    <p className={cn("text-xs mb-1.5", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                      From your routines:
-                    </p>
-                    <div className="flex flex-wrap gap-1.5">
-                      {routineTasks
-                        .filter(rt =>
-                          !formData.title ||
-                          rt.title.toLowerCase().includes(formData.title.toLowerCase())
-                        )
-                        .slice(0, 5)
-                        .map((routine) => (
-                          <button
-                            key={routine._id}
-                            type="button"
-                            onClick={() => applyRoutineTaskToForm(routine)}
-                            className={cn(
-                              "px-2 py-1 text-xs rounded-md border transition-colors",
-                              darkMode
-                                ? "border-gray-700 hover:bg-gray-800 hover:border-gray-600"
-                                : "border-gray-200 hover:bg-gray-50 hover:border-gray-300",
-                              routine.quadrant === "urgent-important" && "text-red-400",
-                              routine.quadrant === "important-not-urgent" && "text-yellow-400",
-                              routine.quadrant === "urgent-not-important" && "text-blue-400",
-                              routine.quadrant === "not-urgent-not-important" && "text-green-400"
-                            )}
-                          >
-                            {routine.title}
-                          </button>
-                        ))}
-                    </div>
-                  </div>
-                )}
               </div>
 
               <div>
@@ -4503,8 +4412,13 @@ export default function HomePage() {
                   <div className="relative">
                     <input
                       type="date"
+                      min={format(new Date(), "yyyy-MM-dd")}
                       value={formData.dueDate}
-                      onChange={(e) => setFormData(prev => ({ ...prev, dueDate: e.target.value }))}
+                      onChange={(e) => {
+                        // Ignore past dates — scheduling is forward-only
+                        if (e.target.value && e.target.value < format(new Date(), "yyyy-MM-dd")) return;
+                        setFormData(prev => ({ ...prev, dueDate: e.target.value }));
+                      }}
                       className={cn(
                         "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
                         darkMode
@@ -4913,199 +4827,6 @@ export default function HomePage() {
                     <p className="text-xs text-red-400">{settingsIcalError}</p>
                   )}
                 </div>
-              </div>
-            </div>
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
-
-      {/* Routine Tasks Drawer */}
-      <Dialog.Root open={isRoutineDrawerOpen} onOpenChange={setIsRoutineDrawerOpen}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40" />
-          <Dialog.Content
-            className={cn(
-              "fixed right-0 top-0 h-full w-full max-w-md z-50 shadow-xl",
-              "data-[state=open]:animate-in data-[state=closed]:animate-out",
-              "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
-              "duration-300 ease-in-out",
-              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
-            )}
-          >
-            <div className="flex flex-col h-full">
-              {/* Drawer Header */}
-              <div className={cn("flex items-center justify-between p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                <div className="flex items-center gap-3">
-                  <div className="p-2 rounded-lg bg-blue-600/20">
-                    <Repeat className="w-5 h-5 text-blue-500" />
-                  </div>
-                  <div>
-                    <Dialog.Title className="text-lg font-semibold">Routine Tasks</Dialog.Title>
-                    <Dialog.Description className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
-                      Create templates for recurring tasks
-                    </Dialog.Description>
-                  </div>
-                </div>
-                <Dialog.Close asChild>
-                  <button className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}>
-                    <X className="w-5 h-5" />
-                  </button>
-                </Dialog.Close>
-              </div>
-
-              {/* Routine Task Form */}
-              <div className={cn("p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                <div className="space-y-3">
-                  <input
-                    type="text"
-                    placeholder="Routine task title..."
-                    value={routineFormData.title}
-                    onChange={(e) => setRoutineFormData(prev => ({ ...prev, title: e.target.value }))}
-                    className={cn(
-                      "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                    )}
-                  />
-                  <textarea
-                    placeholder="Description (optional)..."
-                    value={routineFormData.description}
-                    onChange={(e) => setRoutineFormData(prev => ({ ...prev, description: e.target.value }))}
-                    rows={2}
-                    className={cn(
-                      "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 resize-none",
-                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                    )}
-                  />
-                  <div className="grid grid-cols-2 gap-2">
-                    <select
-                      value={routineFormData.quadrant}
-                      onChange={(e) => setRoutineFormData(prev => ({ ...prev, quadrant: e.target.value as TaskQuadrant }))}
-                      className={cn(
-                        "px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                      )}
-                    >
-                      <option value="urgent-important">Urgent & Important</option>
-                      <option value="important-not-urgent">Important & Not Urgent</option>
-                      <option value="urgent-not-important">Urgent & Not Important</option>
-                      <option value="not-urgent-not-important">Not Urgent & Not Important</option>
-                    </select>
-                    <select
-                      value={routineFormData.priority}
-                      onChange={(e) => setRoutineFormData(prev => ({ ...prev, priority: e.target.value as TaskPriority }))}
-                      className={cn(
-                        "px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                      )}
-                    >
-                      <option value="high">High Priority</option>
-                      <option value="medium">Medium Priority</option>
-                      <option value="low">Low Priority</option>
-                    </select>
-                  </div>
-                  <select
-                    value={routineFormData.duration}
-                    onChange={(e) => setRoutineFormData(prev => ({ ...prev, duration: e.target.value ? Number(e.target.value) : "" }))}
-                    className={cn(
-                      "w-full px-3 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                      isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                    )}
-                  >
-                    <option value="">No default duration</option>
-                    <option value="15">15 minutes</option>
-                    <option value="30">30 minutes</option>
-                    <option value="45">45 minutes</option>
-                    <option value="60">1 hour</option>
-                    <option value="90">1.5 hours</option>
-                    <option value="120">2 hours</option>
-                  </select>
-                  <div className="flex gap-2">
-                    {editingRoutineTask && (
-                      <button
-                        onClick={resetRoutineFormState}
-                        className={cn(
-                          "flex-1 px-3 py-2 rounded-lg font-medium transition-colors",
-                          isDarkMode ? "bg-gray-800 hover:bg-gray-700" : "bg-gray-100 hover:bg-gray-200"
-                        )}
-                      >
-                        Cancel
-                      </button>
-                    )}
-                    <button
-                      onClick={editingRoutineTask ? handleUpdateRoutineTask : handleAddRoutineTask}
-                      disabled={!routineFormData.title.trim() || routineTaskLoading}
-                      className="flex-1 px-3 py-2 bg-blue-600 text-white rounded-lg font-medium hover:bg-blue-700 transition-colors disabled:opacity-50"
-                    >
-                      {routineTaskLoading ? "Saving..." : editingRoutineTask ? "Update" : "Add Routine"}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              {/* Routine Tasks List */}
-              <div className="flex-1 overflow-y-auto p-4">
-                {routineTasks.length === 0 ? (
-                  <div className={cn("text-center py-12", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                    <Repeat className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                    <p className="text-sm">No routine tasks yet</p>
-                    <p className="text-xs mt-1">Create templates for tasks you do regularly</p>
-                  </div>
-                ) : (
-                  <div className="space-y-2">
-                    {routineTasks.map((routine) => (
-                      <div
-                        key={routine._id}
-                        className={cn(
-                          "p-3 rounded-lg border",
-                          isDarkMode ? "bg-gray-800 border-gray-700" : "bg-gray-50 border-gray-200"
-                        )}
-                      >
-                        <div className="flex items-start justify-between gap-2">
-                          <div className="flex-1 min-w-0">
-                            <h4 className="font-medium truncate">{routine.title}</h4>
-                            {routine.description && (
-                              <p className={cn("text-sm truncate mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-600")}>
-                                {routine.description}
-                              </p>
-                            )}
-                            <div className="flex items-center gap-2 mt-2">
-                              <span className={cn(
-                                "text-xs px-2 py-0.5 rounded",
-                                routine.quadrant === "urgent-important" && "bg-red-500/20 text-red-400",
-                                routine.quadrant === "important-not-urgent" && "bg-yellow-500/20 text-yellow-400",
-                                routine.quadrant === "urgent-not-important" && "bg-blue-500/20 text-blue-400",
-                                routine.quadrant === "not-urgent-not-important" && "bg-green-500/20 text-green-400"
-                              )}>
-                                {quadrantConfig[routine.quadrant].title}
-                              </span>
-                              {routine.usageCount !== undefined && routine.usageCount > 0 && (
-                                <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                  Used {routine.usageCount}x
-                                </span>
-                              )}
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            <button
-                              onClick={() => openRoutineTaskForEdit(routine)}
-                              className={cn("p-1.5 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
-                              title="Edit"
-                            >
-                              <Edit3 className="w-4 h-4" />
-                            </button>
-                            <button
-                              onClick={() => handleDeleteRoutineTask(routine._id)}
-                              className={cn("p-1.5 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
-                              title="Delete"
-                            >
-                              <Trash2 className="w-4 h-4" />
-                            </button>
-                          </div>
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                )}
               </div>
             </div>
           </Dialog.Content>

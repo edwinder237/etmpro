@@ -20,20 +20,6 @@ export interface Task {
   parentTaskId?: ObjectId;  // References parent task if this is a subtask
 }
 
-export interface RoutineTask {
-  _id?: ObjectId;
-  title: string;
-  description?: string;
-  quadrant: TaskQuadrant;
-  priority: TaskPriority;
-  duration?: number;
-  userId: string;
-  usageCount?: number;
-  lastUsedAt?: Date;
-  createdAt: Date;
-  updatedAt: Date;
-}
-
 export type ChecklistFrequency = "daily" | "weekly";
 
 export interface ChecklistItem {
@@ -70,7 +56,6 @@ export interface UserSettings {
 
 export const collections = {
   tasks: "tasks",
-  routineTasks: "routineTasks",
   checklistItems: "checklistItems",
   maintenanceItems: "maintenanceItems",
   userSettings: "userSettings",
