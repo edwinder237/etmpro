@@ -70,7 +70,9 @@ import {
   subWeeks,
   addDays,
   subDays,
-  isToday
+  isToday,
+  startOfDay,
+  endOfDay
 } from "date-fns";
 import { format } from "date-fns";
 import { cn } from "~/lib/utils";
@@ -459,6 +461,10 @@ export default function HomePage() {
   interface CalendarGroup { name: string; events: CalendarEvent[]; error?: boolean; }
   const [calendarGroups, setCalendarGroups] = useState<CalendarGroup[]>([]);
   const [calendarLoading, setCalendarLoading] = useState(false);
+  // Flattened iCal events (with source calendar name) for the viewed Task Planning range
+  type PlanningEvent = CalendarEvent & { calendar: string };
+  const [planningEvents, setPlanningEvents] = useState<PlanningEvent[]>([]);
+  const [planningLoading, setPlanningLoading] = useState(false);
 
   // Weather widget state
   const [weatherLocation, setWeatherLocation] = useState("Montreal, Quebec");
@@ -499,6 +505,8 @@ export default function HomePage() {
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
   const [subtasksLoading, setSubtasksLoading] = useState(false);
+  const [editingSubtaskId, setEditingSubtaskId] = useState<string | null>(null);
+  const [editingSubtaskTitle, setEditingSubtaskTitle] = useState("");
 
   // Helper to extract time from dueDate
   const getTimeFromDate = (dateString: string) => {
@@ -679,6 +687,18 @@ export default function HomePage() {
       const taskDate = new Date(task.dueDate);
       return isSameDay(taskDate, date);
     });
+  };
+
+  const getEventsForDate = (date: Date) => {
+    const dayStart = startOfDay(date).getTime();
+    const dayEnd = endOfDay(date).getTime();
+    return planningEvents
+      .filter(ev => {
+        const s = new Date(ev.start).getTime();
+        const e = new Date(ev.end).getTime();
+        return s <= dayEnd && e >= dayStart;
+      })
+      .sort((a, b) => new Date(a.start).getTime() - new Date(b.start).getTime());
   };
 
   const getWeekDays = () => {
@@ -1018,6 +1038,54 @@ export default function HomePage() {
     return () => window.removeEventListener("focus", onFocus);
   }, [icalUrls, fetchCalendarEvents]);
 
+  // Fetch iCal events for an arbitrary date range (used by Task Planning)
+  const fetchPlanningEvents = useCallback(async (urls: string[], rangeStart: Date, rangeEnd: Date, signal?: AbortSignal) => {
+    if (!urls.length) { setPlanningEvents([]); setPlanningLoading(false); return; }
+    setPlanningLoading(true);
+    try {
+      const res = await fetch("/api/calendar/feeds", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          urls,
+          timezone: Intl.DateTimeFormat().resolvedOptions().timeZone,
+          rangeStart: rangeStart.toISOString(),
+          rangeEnd: rangeEnd.toISOString(),
+        }),
+        signal,
+      });
+      if (signal?.aborted || !res.ok) return;
+      const data = (await res.json()) as { groups: CalendarGroup[] };
+      if (signal?.aborted) return;
+      setPlanningEvents(data.groups.flatMap(g => g.events.map(e => ({ ...e, calendar: g.name }))));
+    } catch (err) {
+      if (err instanceof Error && err.name === "AbortError") return;
+    } finally {
+      if (!signal?.aborted) setPlanningLoading(false);
+    }
+  }, []);
+
+  // Refetch planning events whenever the drawer opens or the viewed range changes
+  useEffect(() => {
+    if (!isCalendarDrawerOpen || !icalUrls.length) { setPlanningEvents([]); setPlanningLoading(false); return; }
+    let rangeStart: Date;
+    let rangeEnd: Date;
+    if (calendarView === "day") {
+      rangeStart = startOfDay(selectedDate);
+      rangeEnd = endOfDay(selectedDate);
+    } else if (calendarView === "week") {
+      rangeStart = startOfWeek(selectedDate, { weekStartsOn: 0 });
+      rangeEnd = endOfWeek(selectedDate, { weekStartsOn: 0 });
+    } else {
+      // Month grid includes padding days from adjacent months
+      rangeStart = startOfWeek(startOfMonth(selectedDate), { weekStartsOn: 0 });
+      rangeEnd = endOfWeek(endOfMonth(selectedDate), { weekStartsOn: 0 });
+    }
+    const controller = new AbortController();
+    void fetchPlanningEvents(icalUrls, rangeStart, rangeEnd, controller.signal);
+    return () => controller.abort();
+  }, [isCalendarDrawerOpen, calendarView, selectedDate, icalUrls, fetchPlanningEvents]);
+
   // Checklist functions
   const fetchChecklistItems = async () => {
     try {
@@ -1045,6 +1113,12 @@ export default function HomePage() {
 
   const todaysChecklistItems = checklistItems.filter(isChecklistItemVisibleToday);
   const completedCount = todaysChecklistItems.filter(isChecklistItemCompletedToday).length;
+
+  // Today's app tasks (with a due date) shown alongside calendar events in the side panel
+  const todaysScheduledTasks = tasks
+    .filter(t => t.dueDate && isSameDay(new Date(t.dueDate), new Date()))
+    .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
+  const hasSidePanel = icalUrls.length > 0 || todaysScheduledTasks.length > 0;
 
   const handleToggleChecklistItem = async (id: string) => {
     // Optimistic update
@@ -1671,6 +1745,38 @@ export default function HomePage() {
     }
   };
 
+  const startEditSubtask = (subtask: Task) => {
+    setEditingSubtaskId(subtask._id);
+    setEditingSubtaskTitle(subtask.title);
+  };
+
+  const cancelEditSubtask = () => {
+    setEditingSubtaskId(null);
+    setEditingSubtaskTitle("");
+  };
+
+  const handleUpdateSubtaskTitle = async (subtaskId: string) => {
+    const trimmed = editingSubtaskTitle.trim();
+    const current = subtasks.find(s => s._id === subtaskId);
+    if (!trimmed || trimmed === current?.title) { cancelEditSubtask(); return; }
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: subtaskId, title: trimmed }),
+      });
+      if (response.ok) {
+        const updatedSubtask = await response.json() as Task;
+        setSubtasks(prev => prev.map(s => s._id === subtaskId ? updatedSubtask : s));
+        cancelEditSubtask();
+      } else {
+        toast.error("Failed to update subtask");
+      }
+    } catch {
+      toast.error("Error updating subtask");
+    }
+  };
+
   const handleCompleteParentTask = async () => {
     if (!editingTask) return;
 
@@ -1892,6 +1998,7 @@ export default function HomePage() {
     resetFormState();
     setSubtasks([]);
     setNewSubtaskTitle("");
+    cancelEditSubtask();
   };
 
   const openModalForQuadrant = (quadrant: TaskQuadrant) => {
@@ -2527,10 +2634,11 @@ export default function HomePage() {
                     <ChevronLeft className="w-5 h-5" />
                   </button>
                   <div className="text-center">
-                    <h3 className="font-semibold text-lg">
+                    <h3 className="font-semibold text-lg flex items-center justify-center gap-2">
                       {calendarView === "day" && format(selectedDate, "EEEE, MMMM d, yyyy")}
                       {calendarView === "week" && `${format(startOfWeek(selectedDate), "MMM d")} - ${format(endOfWeek(selectedDate), "MMM d, yyyy")}`}
                       {calendarView === "month" && format(selectedDate, "MMMM yyyy")}
+                      {planningLoading && <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />}
                     </h3>
                     {isToday(selectedDate) && calendarView === "day" && (
                       <span className="text-xs text-blue-500 font-medium">Today</span>
@@ -2548,9 +2656,13 @@ export default function HomePage() {
                 </div>
 
                 {/* My Day View */}
-                {calendarView === "day" && (
+                {calendarView === "day" && (() => {
+                  const dayTasks = getTasksForDate(selectedDate);
+                  const dayEvents = getEventsForDate(selectedDate);
+                  const showEventSkeleton = planningLoading && icalUrls.length > 0;
+                  return (
                   <div className="space-y-3">
-                    {getTasksForDate(selectedDate).length === 0 ? (
+                    {!showEventSkeleton && dayTasks.length === 0 && dayEvents.length === 0 ? (
                       <div className={cn("text-center py-12 rounded-lg", isDarkMode ? "bg-gray-800" : "bg-gray-50")}>
                         <CalendarDays className={cn("w-12 h-12 mx-auto mb-3", isDarkMode ? "text-gray-600" : "text-gray-400")} />
                         <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
@@ -2561,7 +2673,54 @@ export default function HomePage() {
                         </p>
                       </div>
                     ) : (
-                      getTasksForDate(selectedDate).map((task) => (
+                      <>
+                      {showEventSkeleton && [1, 2, 3].map((i) => (
+                        <div
+                          key={`event-skeleton-${i}`}
+                          className={cn(
+                            "flex items-start gap-4 p-4 rounded-lg border-l-4 border-l-indigo-200",
+                            isDarkMode ? "bg-gray-800" : "bg-gray-50"
+                          )}
+                        >
+                          <div className={cn("h-7 w-16 rounded-lg animate-pulse flex-shrink-0", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
+                          <div className="flex-1 space-y-2">
+                            <div className={cn("h-4 w-1/2 rounded animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
+                            <div className={cn("h-3 w-24 rounded animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
+                          </div>
+                        </div>
+                      ))}
+                      {!showEventSkeleton && dayEvents.map((ev) => (
+                        <div
+                          key={ev.id}
+                          className={cn(
+                            "flex items-start gap-4 p-4 rounded-lg border-l-4 border-l-indigo-500",
+                            isDarkMode ? "bg-gray-800" : "bg-gray-50"
+                          )}
+                        >
+                          <div className={cn(
+                            "flex-shrink-0 px-3 py-1 rounded-lg text-sm font-medium",
+                            isDarkMode ? "bg-gray-700" : "bg-white border border-gray-200"
+                          )}>
+                            {ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")}
+                          </div>
+                          <div className="flex-1">
+                            <h4 className="font-medium flex items-center gap-1.5">
+                              <Calendar className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                              {ev.title}
+                            </h4>
+                            {ev.location && (
+                              <p className={cn("text-sm mt-1", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                                {ev.location}
+                              </p>
+                            )}
+                            <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded mt-2 bg-indigo-500/20 text-indigo-400">
+                              <Calendar className="w-3 h-3" />
+                              {ev.calendar}
+                            </span>
+                          </div>
+                        </div>
+                      ))}
+                      {dayTasks.map((task) => (
                         <div
                           key={task._id}
                           onClick={() => openCalendarTaskForEdit(task)}
@@ -2615,10 +2774,12 @@ export default function HomePage() {
                             </div>
                           </div>
                         </div>
-                      ))
+                      ))}
+                      </>
                     )}
                   </div>
-                )}
+                  );
+                })()}
 
                 {/* My Week View */}
                 {calendarView === "week" && (
@@ -2632,6 +2793,10 @@ export default function HomePage() {
                     {/* Week days */}
                     {getWeekDays().map((day) => {
                       const dayTasks = getTasksForDate(day);
+                      const dayEvents = getEventsForDate(day);
+                      const shownEvents = dayEvents.slice(0, 2);
+                      const shownTasks = dayTasks.slice(0, 3);
+                      const overflow = (dayEvents.length - shownEvents.length) + (dayTasks.length - shownTasks.length);
                       return (
                         <div
                           key={day.toISOString()}
@@ -2654,7 +2819,16 @@ export default function HomePage() {
                             {format(day, "d")}
                           </div>
                           <div className="space-y-1">
-                            {dayTasks.slice(0, 3).map((task) => (
+                            {shownEvents.map((ev) => (
+                              <div
+                                key={ev.id}
+                                data-tooltip={`${ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")} - ${ev.title} (${ev.calendar})`}
+                                className="tooltip-task text-xs p-1.5 rounded truncate bg-indigo-500/20 text-indigo-400"
+                              >
+                                {ev.allDay ? "" : format(new Date(ev.start), "HH:mm") + " "}{ev.title}
+                              </div>
+                            ))}
+                            {shownTasks.map((task) => (
                               <div
                                 key={task._id}
                                 data-tooltip={`${task.dueDate ? format(new Date(task.dueDate), "HH:mm") + " - " : ""}${task.title}`}
@@ -2673,9 +2847,9 @@ export default function HomePage() {
                                 {task.dueDate ? format(new Date(task.dueDate), "HH:mm") : ""} {task.title}
                               </div>
                             ))}
-                            {dayTasks.length > 3 && (
+                            {overflow > 0 && (
                               <div className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                +{dayTasks.length - 3} more
+                                +{overflow} more
                               </div>
                             )}
                           </div>
@@ -2700,6 +2874,7 @@ export default function HomePage() {
                     <div className="grid grid-cols-7 gap-1">
                       {getMonthDays().map((day, index) => {
                         const dayTasks = getTasksForDate(day);
+                        const dayEvents = getEventsForDate(day);
                         const isCurrentMonth = isSameMonth(day, selectedDate);
                         return (
                           <div
@@ -2724,6 +2899,15 @@ export default function HomePage() {
                               {format(day, "d")}
                             </div>
                             <div className="space-y-0.5">
+                              {dayEvents.slice(0, 1).map((ev) => (
+                                <div
+                                  key={ev.id}
+                                  data-tooltip={`${ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")} - ${ev.title} (${ev.calendar})`}
+                                  className="tooltip-task text-xs p-1 rounded truncate bg-indigo-500/20 text-indigo-400"
+                                >
+                                  {ev.title}
+                                </div>
+                              ))}
                               {dayTasks.slice(0, 2).map((task) => (
                                 <div
                                   key={task._id}
@@ -2743,9 +2927,16 @@ export default function HomePage() {
                                   {task.title}
                                 </div>
                               ))}
-                              {/* Dots indicator for additional tasks */}
-                              {dayTasks.length > 2 && (
+                              {/* Dots indicator for additional tasks/events */}
+                              {(dayTasks.length > 2 || dayEvents.length > 1) && (
                                 <div className="flex gap-0.5">
+                                  {dayEvents.slice(1, 4).map((ev) => (
+                                    <div
+                                      key={ev.id}
+                                      data-tooltip={`${ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")} - ${ev.title} (${ev.calendar})`}
+                                      className="tooltip-task w-1.5 h-1.5 rounded-full bg-indigo-500"
+                                    />
+                                  ))}
                                   {dayTasks.slice(2, 5).map((task) => (
                                     <div
                                       key={task._id}
@@ -3351,7 +3542,7 @@ export default function HomePage() {
                 <div className="p-1.5 rounded-lg bg-purple-600/20">
                   <CheckCircle2 className="w-4 h-4 text-purple-500" />
                 </div>
-                {icalUrls.length > 0 && (
+                {hasSidePanel && (
                   <div className="p-1.5 rounded-lg bg-blue-600/20">
                     <Calendar className="w-4 h-4 text-blue-500" />
                   </div>
@@ -3386,11 +3577,11 @@ export default function HomePage() {
           {!isChecklistCollapsed && (
             <div className={cn(
               "flex flex-col lg:flex-row",
-              icalUrls.length > 0 && (isDarkMode ? "divide-y lg:divide-y-0 lg:divide-x divide-gray-800" : "divide-y lg:divide-y-0 lg:divide-x divide-gray-100")
+              hasSidePanel && (isDarkMode ? "divide-y lg:divide-y-0 lg:divide-x divide-gray-800" : "divide-y lg:divide-y-0 lg:divide-x divide-gray-100")
             )}>
 
               {/* Routine column */}
-              <div className={cn("px-3 md:px-4 pb-3 md:pb-4", icalUrls.length > 0 ? "lg:w-2/3" : "w-full")}>
+              <div className={cn("px-3 md:px-4 pb-3 md:pb-4", hasSidePanel ? "lg:w-2/3" : "w-full")}>
                 {/* Tab toggle */}
                 <div className="flex items-center gap-1 mt-1 mb-2">
                   <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
@@ -3770,7 +3961,7 @@ export default function HomePage() {
               </div>
 
               {/* Calendar Events column */}
-              {icalUrls.length > 0 && (
+              {hasSidePanel && (
                 <div className="px-3 md:px-4 pb-3 md:pb-4 pt-2 lg:w-1/3">
                   {calendarLoading && calendarGroups.length === 0 ? (
                     <div className="space-y-2 py-2">
@@ -3780,6 +3971,40 @@ export default function HomePage() {
                     </div>
                   ) : (
                     <div className="space-y-4 mt-1">
+                      {/* Scheduled in-app tasks for today */}
+                      {todaysScheduledTasks.length > 0 && (
+                        <div>
+                          <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1.5 px-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                            Scheduled Tasks
+                          </p>
+                          <div className="space-y-1.5">
+                            {todaysScheduledTasks.map((task) => (
+                              <div
+                                key={task._id}
+                                onClick={() => openCalendarTaskForEdit(task)}
+                                className={cn(
+                                  "flex items-start gap-2.5 px-3 py-2.5 rounded-lg border-l-2 cursor-pointer transition-colors",
+                                  task.quadrant === "urgent-important" && "border-red-500",
+                                  task.quadrant === "important-not-urgent" && "border-yellow-500",
+                                  task.quadrant === "urgent-not-important" && "border-blue-500",
+                                  task.quadrant === "not-urgent-not-important" && "border-green-500",
+                                  isDarkMode ? "bg-gray-800/60 hover:bg-gray-800" : "bg-gray-50 hover:bg-gray-100"
+                                )}
+                              >
+                                <div className="flex-1 min-w-0">
+                                  <p className={cn("text-sm font-medium truncate", isDarkMode ? "text-gray-100" : "text-gray-800")}>
+                                    {task.title}
+                                  </p>
+                                  <p className={cn("text-xs mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-500")}>
+                                    {task.dueDate ? new Date(task.dueDate).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}
+                                    {task.duration ? ` · ${task.duration} min` : ""}
+                                  </p>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
                       {calendarGroups.map((group, gi) => (
                         <div key={gi}>
                           <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1.5 px-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
@@ -4367,8 +4592,19 @@ export default function HomePage() {
 
                 {/* Subtask List */}
                 {subtasksLoading ? (
-                  <div className="text-center py-4">
-                    <span className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>Loading subtasks...</span>
+                  <div className="space-y-2 mb-3">
+                    {[1, 2, 3].map((i) => (
+                      <div
+                        key={i}
+                        className={cn(
+                          "flex items-center gap-2 p-2 rounded-lg",
+                          isDarkMode ? "bg-gray-800" : "bg-gray-100"
+                        )}
+                      >
+                        <div className={cn("w-4 h-4 rounded-full animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-300")} />
+                        <div className={cn("flex-1 h-4 rounded animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-300")} />
+                      </div>
+                    ))}
                   </div>
                 ) : (
                   <div className="space-y-2 mb-3">
@@ -4393,12 +4629,50 @@ export default function HomePage() {
                             <div className="w-4 h-4 rounded-full border-2 border-current" />
                           )}
                         </button>
-                        <span className={cn(
-                          "flex-1 text-sm",
-                          subtask.status === "completed" && "line-through opacity-60"
-                        )}>
-                          {subtask.title}
-                        </span>
+                        {editingSubtaskId === subtask._id ? (
+                          <input
+                            type="text"
+                            autoFocus
+                            value={editingSubtaskTitle}
+                            onChange={(e) => setEditingSubtaskTitle(e.target.value)}
+                            onBlur={() => void handleUpdateSubtaskTitle(subtask._id)}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") {
+                                e.preventDefault();
+                                void handleUpdateSubtaskTitle(subtask._id);
+                              } else if (e.key === "Escape") {
+                                e.preventDefault();
+                                cancelEditSubtask();
+                              }
+                            }}
+                            className={cn(
+                              "flex-1 text-sm px-2 py-1 rounded border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                              isDarkMode ? "bg-gray-900 border-gray-700 text-white" : "bg-white border-gray-300 text-gray-900"
+                            )}
+                          />
+                        ) : (
+                          <span
+                            onClick={() => startEditSubtask(subtask)}
+                            className={cn(
+                              "flex-1 text-sm cursor-text",
+                              subtask.status === "completed" && "line-through opacity-60"
+                            )}
+                          >
+                            {subtask.title}
+                          </span>
+                        )}
+                        {editingSubtaskId !== subtask._id && (
+                          <button
+                            onClick={() => startEditSubtask(subtask)}
+                            className={cn(
+                              "p-1 rounded transition-colors flex-shrink-0",
+                              isDarkMode ? "hover:bg-gray-700 text-gray-400" : "hover:bg-gray-200 text-gray-500"
+                            )}
+                            aria-label="Edit subtask"
+                          >
+                            <Edit3 className="w-3 h-3" />
+                          </button>
+                        )}
                         <button
                           onClick={() => handleDeleteSubtask(subtask._id)}
                           className={cn(

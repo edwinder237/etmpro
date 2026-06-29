@@ -25,6 +25,9 @@ function checkRateLimit(ip: string): boolean {
 const bodySchema = z.object({
   urls: z.array(z.string().url("Invalid calendar URL")).min(1).max(10),
   timezone: z.string().max(50).default("UTC"),
+  // Optional explicit window (ISO strings). When omitted, defaults to "today".
+  rangeStart: z.string().datetime().optional(),
+  rangeEnd: z.string().datetime().optional(),
 });
 
 export interface CalendarEvent {
@@ -62,7 +65,12 @@ function getTodayBounds(timezone: string): { todayStart: Date; todayEnd: Date } 
   };
 }
 
-async function parseFeed(url: string, index: number, timezone: string): Promise<CalendarGroup> {
+async function parseFeed(
+  url: string,
+  index: number,
+  rangeStart: Date,
+  rangeEnd: Date,
+): Promise<CalendarGroup> {
   const fallbackName = `Calendar ${index + 1}`;
   try {
     const feedRes = await fetch(url, {
@@ -75,7 +83,8 @@ async function parseFeed(url: string, index: number, timezone: string): Promise<
     const calendarName = /^X-WR-CALNAME:(.+)$/m.exec(feedText)?.[1]?.trim() ?? fallbackName;
     const allComponents = ical.parseICS(feedText);
 
-    const { todayStart, todayEnd } = getTodayBounds(timezone);
+    const todayStart = rangeStart;
+    const todayEnd = rangeEnd;
 
     const todayEvents: CalendarEvent[] = [];
 
@@ -146,8 +155,20 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
     }
 
-    const { timezone } = parsed.data;
-    const groups = await Promise.all(parsed.data.urls.map((url, i) => parseFeed(url, i, timezone)));
+    const { timezone, rangeStart, rangeEnd } = parsed.data;
+
+    let start: Date;
+    let end: Date;
+    if (rangeStart && rangeEnd) {
+      start = new Date(rangeStart);
+      end = new Date(rangeEnd);
+    } else {
+      const bounds = getTodayBounds(timezone);
+      start = bounds.todayStart;
+      end = bounds.todayEnd;
+    }
+
+    const groups = await Promise.all(parsed.data.urls.map((url, i) => parseFeed(url, i, start, end)));
 
     // POST responses are user-specific — must not be cached by CDN
     return NextResponse.json({ groups }, { headers: { "Cache-Control": "no-store" } });
