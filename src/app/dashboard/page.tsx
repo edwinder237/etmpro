@@ -129,6 +129,27 @@ interface MaintenanceItem {
   nextDueDate: string;
 }
 
+interface PaymentLineItem {
+  label: string;
+  amount: number;
+}
+
+interface PaymentAccount {
+  id: string;
+  shortName: string;
+  total: number;
+  items: PaymentLineItem[];
+}
+
+interface PaymentsDueData {
+  configured: boolean;
+  date?: string;
+  totalIncome?: number;
+  finalBalance?: number;
+  accounts?: PaymentAccount[];
+  budgets?: PaymentLineItem[];
+}
+
 const INTERVAL_PRESETS = [
   { label: "Monthly", days: 30 },
   { label: "3 months", days: 90 },
@@ -469,6 +490,9 @@ export default function HomePage() {
   const [showMaintenanceForm, setShowMaintenanceForm] = useState(false);
   const [editingMaintenanceItem, setEditingMaintenanceItem] = useState<MaintenanceItem | null>(null);
   const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", intervalDays: 90, nextDueDate: "" });
+  const [paymentsData, setPaymentsData] = useState<PaymentsDueData | null>(null);
+  const [expandedPaymentAccounts, setExpandedPaymentAccounts] = useState<Set<string>>(new Set());
+  const [paidPaymentAccounts, setPaidPaymentAccounts] = useState<Set<string>>(new Set());
   const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null);
   const [checklistFormData, setChecklistFormData] = useState({
     title: "",
@@ -755,6 +779,12 @@ export default function HomePage() {
     void fetchTasks();
     void fetchChecklistItems();
     void fetchMaintenanceItems();
+    void fetchPaymentsDue();
+    // Restore today's locally-tracked paid accounts
+    try {
+      const stored = localStorage.getItem(`eisenq-payments-paid-${format(new Date(), "yyyy-MM-dd")}`);
+      if (stored) setPaidPaymentAccounts(new Set(JSON.parse(stored) as string[]));
+    } catch { /* ignore */ }
   }, []);
 
   // Initialize dark mode from localStorage or system preference
@@ -1322,6 +1352,51 @@ export default function HomePage() {
     setEditingMaintenanceItem(null);
     setShowMaintenanceForm(false);
   };
+
+  // Payments due (external finance API, grouped by account)
+  const fetchPaymentsDue = async () => {
+    try {
+      const res = await fetch(`/api/payments?date=${format(new Date(), "yyyy-MM-dd")}`);
+      if (res.ok) setPaymentsData(await res.json() as PaymentsDueData);
+    } catch { /* silently fail */ }
+  };
+
+  // Paid state is per-day and local-only until the finance API supports write-back
+  const paidPaymentsStorageKey = () => `eisenq-payments-paid-${format(new Date(), "yyyy-MM-dd")}`;
+
+  const togglePaymentAccountPaid = (accountId: string) => {
+    const wasPaid = paidPaymentAccounts.has(accountId);
+    if (wasPaid) {
+      playUncompleteSound();
+    } else {
+      playCompletionSound();
+    }
+    const next = new Set(paidPaymentAccounts);
+    if (wasPaid) {
+      next.delete(accountId);
+    } else {
+      next.add(accountId);
+    }
+    setPaidPaymentAccounts(next);
+    try {
+      localStorage.setItem(paidPaymentsStorageKey(), JSON.stringify([...next]));
+    } catch { /* ignore */ }
+  };
+
+  const togglePaymentAccountExpanded = (accountId: string) => {
+    setExpandedPaymentAccounts(prev => {
+      const next = new Set(prev);
+      if (next.has(accountId)) {
+        next.delete(accountId);
+      } else {
+        next.add(accountId);
+      }
+      return next;
+    });
+  };
+
+  const formatPaymentAmount = (amount: number) =>
+    `$${Math.abs(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 
   // Drag-to-reorder sensors and handler
   const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 8 } });
@@ -3645,6 +3720,101 @@ export default function HomePage() {
                                 </div>
                               );
                             })}
+                          </div>
+                        </div>
+                      );
+                    })()}
+
+                    {/* Payments due on Today tab (external finance API, grouped by account) */}
+                    {checklistTab === "today" && paymentsData?.configured && (() => {
+                      const accounts = paymentsData.accounts ?? [];
+                      const budgets = paymentsData.budgets ?? [];
+                      const budgetTotal = budgets.reduce((s, b) => s + b.amount, 0);
+                      const rows = [
+                        ...accounts.map(a => ({ id: a.id, name: a.shortName, total: a.total, items: a.items })),
+                        ...(budgets.length > 0 ? [{ id: "budgets", name: "Budgets", total: budgetTotal, items: budgets }] : []),
+                      ];
+                      if (!rows.length) return null;
+                      const totalDue = rows.reduce((s, r) => s + r.total, 0);
+                      const finalBalance = paymentsData.finalBalance ?? 0;
+                      return (
+                        <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
+                          <div className="flex items-baseline justify-between mb-2 px-1">
+                            <p className={cn("text-xs font-semibold uppercase tracking-wide", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                              Payments due
+                            </p>
+                            <span className="text-xs font-medium text-red-400">{formatPaymentAmount(totalDue)}</span>
+                          </div>
+                          <div className="space-y-0.5">
+                            {rows.map(row => {
+                              const isPaid = paidPaymentAccounts.has(row.id);
+                              const isExpanded = expandedPaymentAccounts.has(row.id);
+                              return (
+                                <div key={row.id}>
+                                  <div className={cn("flex items-center gap-3 py-1.5 px-2 rounded-lg", isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50")}>
+                                    <button
+                                      onClick={() => togglePaymentAccountPaid(row.id)}
+                                      className="flex-shrink-0"
+                                      title={isPaid ? "Mark as unpaid" : "Mark as paid"}
+                                    >
+                                      {isPaid ? (
+                                        <CheckCircle2 className="w-5 h-5 text-green-500" />
+                                      ) : (
+                                        <Circle className="w-5 h-5 text-red-400" />
+                                      )}
+                                    </button>
+                                    <div className="flex-1 min-w-0">
+                                      <p className={cn("text-sm font-medium truncate", isPaid && "line-through opacity-60", isDarkMode ? "text-gray-200" : "text-gray-700")}>
+                                        {row.name}
+                                      </p>
+                                      <p className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                                        {row.items.length} payment{row.items.length !== 1 ? "s" : ""}
+                                      </p>
+                                    </div>
+                                    <span className={cn("text-sm font-medium flex-shrink-0", isPaid ? "line-through opacity-60" : "", isDarkMode ? "text-gray-300" : "text-gray-600")}>
+                                      {formatPaymentAmount(row.total)}
+                                    </span>
+                                    <button
+                                      onClick={() => togglePaymentAccountExpanded(row.id)}
+                                      className={cn(
+                                        "flex-shrink-0 p-1 rounded-full transition-colors",
+                                        isExpanded
+                                          ? "bg-blue-600/20 text-blue-500"
+                                          : isDarkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600"
+                                      )}
+                                      title={isExpanded ? "Hide details" : "Show details"}
+                                    >
+                                      <Info className="w-4 h-4" />
+                                    </button>
+                                  </div>
+                                  {isExpanded && (
+                                    <div className={cn("ml-10 mr-9 mb-1.5 px-3 py-1 rounded-lg", isDarkMode ? "bg-gray-800/50" : "bg-gray-50")}>
+                                      {[...row.items].sort((a, b) => a.amount - b.amount).map((it, ii) => (
+                                        <div
+                                          key={ii}
+                                          className={cn(
+                                            "flex items-center justify-between gap-3 py-1 text-xs",
+                                            ii > 0 && (isDarkMode ? "border-t border-gray-800" : "border-t border-gray-200")
+                                          )}
+                                        >
+                                          <span className={cn("truncate", isDarkMode ? "text-gray-400" : "text-gray-500")}>{it.label}</span>
+                                          <span className={cn("flex-shrink-0", isDarkMode ? "text-gray-300" : "text-gray-600")}>{formatPaymentAmount(it.amount)}</span>
+                                        </div>
+                                      ))}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })}
+                          </div>
+                          <div className={cn("flex items-center justify-between mt-2 pt-2 border-t text-xs", isDarkMode ? "border-gray-800 text-gray-500" : "border-gray-200 text-gray-400")}>
+                            <span>Income {formatPaymentAmount(paymentsData.totalIncome ?? 0)}</span>
+                            <span>
+                              Day ends{" "}
+                              <span className={cn("font-medium", finalBalance >= 0 ? "text-green-500" : "text-red-400")}>
+                                {finalBalance >= 0 ? "+" : "-"}{formatPaymentAmount(finalBalance)}
+                              </span>
+                            </span>
                           </div>
                         </div>
                       );
