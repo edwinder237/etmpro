@@ -1,30 +1,18 @@
 import Link from "next/link";
-import { EisenqLogo } from "~/components/icons/EisenqLogo";
+
+const serif = { fontFamily: "var(--font-serif)" } as const;
 
 export function Footer() {
   return (
-    <footer className="py-8 px-6 border-t border-gray-800">
-      <div className="max-w-6xl mx-auto flex flex-col md:flex-row items-center justify-between gap-4">
-        {/* Logo and Copyright */}
-        <div className="flex items-center gap-4">
-          <div className="flex items-center gap-2">
-            <EisenqLogo size={24} />
-            <span className="text-sm font-medium text-white">EisenQ</span>
-          </div>
-          <span className="text-sm text-gray-500">
-            {new Date().getFullYear()} All rights reserved.
-          </span>
+    <footer style={{ borderTop: "1px solid #e8dece" }}>
+      <div className="mx-auto max-w-[1100px] px-6 md:px-10 py-[26px] flex flex-wrap items-center justify-between gap-3">
+        <div className="flex items-center gap-3">
+          <span style={serif} className="text-[18px]">EisenQ</span>
+          <span className="text-[13px]" style={{ color: "#a89a80" }}>© {new Date().getFullYear()} · All rights reserved.</span>
         </div>
-
-        {/* Creator Credit */}
-        <div className="text-sm text-gray-500">
+        <div className="text-[13px]" style={{ color: "#a89a80" }}>
           Created by{" "}
-          <Link
-            href="https://lumeve.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="text-blue-500 hover:text-blue-400 transition-colors"
-          >
+          <Link href="https://lumeve.com" target="_blank" rel="noopener noreferrer" style={{ color: "#7f6a45" }} className="hover:underline">
             Lumeve
           </Link>
         </div>
