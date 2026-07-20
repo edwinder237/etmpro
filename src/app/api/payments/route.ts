@@ -38,13 +38,18 @@ export async function GET(request: NextRequest) {
     });
 
     if (!res.ok) {
-      return NextResponse.json({ error: "Finance API request failed" }, { status: 502 });
+      console.error("Payments: finance API responded with status", res.status);
+      return NextResponse.json(
+        { error: "Finance API request failed", upstreamStatus: res.status },
+        { status: 502 }
+      );
     }
 
     const data = (await res.json()) as FinanceApiResponse;
 
     return NextResponse.json(buildPaymentsPayload(data, date));
-  } catch {
+  } catch (err) {
+    console.error("Payments: request failed", err);
     return NextResponse.json({ error: "Failed to fetch payments" }, { status: 500 });
   }
 }
