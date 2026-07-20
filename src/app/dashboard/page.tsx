@@ -512,6 +512,7 @@ export default function HomePage() {
   const [editingMaintenanceItem, setEditingMaintenanceItem] = useState<MaintenanceItem | null>(null);
   const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", intervalDays: 90, nextDueDate: "" });
   const [paymentsData, setPaymentsData] = useState<PaymentsDueData | null>(null);
+  const [paymentsError, setPaymentsError] = useState(false);
   const [expandedPaymentAccounts, setExpandedPaymentAccounts] = useState<Set<string>>(new Set());
   const [paidPaymentAccounts, setPaidPaymentAccounts] = useState<Set<string>>(new Set());
   const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null);
@@ -1700,10 +1701,17 @@ export default function HomePage() {
 
   // Payments due (external finance API, grouped by account)
   const fetchPaymentsDue = async () => {
+    setPaymentsError(false);
     try {
       const res = await fetch(`/api/payments?date=${format(new Date(), "yyyy-MM-dd")}`);
-      if (res.ok) setPaymentsData(await res.json() as PaymentsDueData);
-    } catch { /* silently fail */ }
+      if (res.ok) {
+        setPaymentsData(await res.json() as PaymentsDueData);
+      } else {
+        setPaymentsError(true);
+      }
+    } catch {
+      setPaymentsError(true);
+    }
   };
 
   // Paid state is per-day and local-only until the finance API supports write-back
@@ -4096,6 +4104,25 @@ export default function HomePage() {
                       );
                     })()}
 
+                    {/* Payments failures are otherwise invisible — surface them with a retry */}
+                    {checklistTab === "today" && paymentsError && (
+                      <div className={cn(
+                        "mt-3 pt-3 border-t flex items-center justify-between px-1",
+                        isDarkMode ? "border-gray-800" : "border-gray-200"
+                      )}>
+                        <span className={cn("text-xs flex items-center gap-1.5", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                          <AlertCircle className="w-3.5 h-3.5" />
+                          Couldn&apos;t load payments
+                        </span>
+                        <button
+                          onClick={() => void fetchPaymentsDue()}
+                          className="text-xs text-blue-500 hover:text-blue-400"
+                        >
+                          Retry
+                        </button>
+                      </div>
+                    )}
+
                     {/* Payments due on Today tab (external finance API, grouped by account) */}
                     {checklistTab === "today" && paymentsData?.configured && (() => {
                       const accounts = paymentsData.accounts ?? [];
@@ -4103,7 +4130,7 @@ export default function HomePage() {
                       const budgetTotal = budgets.reduce((s, b) => s + b.amount, 0);
                       const rows = [
                         ...accounts.map(a => ({ id: a.id, name: a.shortName, total: a.total, items: a.items })),
-                        ...(budgets.length > 0 ? [{ id: "budgets", name: "Budgets", total: budgetTotal, items: budgets }] : []),
+                        ...(budgets.length > 0 ? [{ id: "budgets", name: "Other payments", total: budgetTotal, items: budgets }] : []),
                       ];
                       if (!rows.length) return null;
                       const totalDue = rows.reduce((s, r) => s + r.total, 0);
