@@ -80,7 +80,7 @@ import { format } from "date-fns";
 import { cn } from "~/lib/utils";
 import { addToCalendar, type CalendarProvider } from "~/lib/calendar-export";
 import toast, { Toaster } from "react-hot-toast";
-import { UserButton } from "@clerk/nextjs";
+import { UserButton, useUser } from "@clerk/nextjs";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
 import { TaskIcon } from "~/components/icons/TaskIcon";
@@ -400,6 +400,7 @@ export default function HomePage() {
   const [darkMode, setDarkMode] = useState<boolean | null>(null);
   // Use dark mode as default during SSR/initial render to prevent flash
   const isDarkMode = darkMode ?? true;
+  const { user } = useUser();
   const { playCompletionSound, playUncompleteSound, vibrateOnDelete } = useAudioFeedback();
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
@@ -2466,164 +2467,225 @@ export default function HomePage() {
     }).length
   };
 
+  // ===== "Calm Editorial" redesign: theming + derived view models =====
+
+  // Drive the token theme: paper background + .dark class, scoped to the dashboard.
+  useEffect(() => {
+    document.body.classList.add("paper");
+    document.body.classList.remove("bg-gray-950", "text-white");
+    return () => {
+      document.body.classList.remove("paper");
+      document.body.classList.add("bg-gray-950", "text-white");
+    };
+  }, []);
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", isDarkMode);
+  }, [isDarkMode]);
+
+  const greeting = (() => {
+    const h = new Date().getHours();
+    if (h < 12) return "Good morning";
+    if (h < 18) return "Good afternoon";
+    return "Good evening";
+  })();
+  const firstName = user?.firstName ?? "";
+
+  // Per-quadrant editorial config (name, subtitle, semantic color, index, contextual copy)
+  const MATRIX_META: Record<TaskQuadrant, {
+    name: string; subtitle: string; color: string; index: string;
+    nextLabel: string; addLabel: string; emptyTitle: string; emptySub: string;
+  }> = {
+    "urgent-important": {
+      name: "Do First", subtitle: "Urgent & Important", color: "var(--q-do-first)", index: "01",
+      nextLabel: "Next action", addLabel: "Add a task",
+      emptyTitle: "Nothing urgent right now.", emptySub: "A clear, calm start to the day.",
+    },
+    "important-not-urgent": {
+      name: "Schedule", subtitle: "Important & Not Urgent", color: "var(--q-schedule)", index: "02",
+      nextLabel: "Next action", addLabel: "Add a task",
+      emptyTitle: "Nothing scheduled yet.", emptySub: "Plan what matters before it turns urgent.",
+    },
+    "urgent-not-important": {
+      name: "Delegate", subtitle: "Urgent & Not Important", color: "var(--q-delegate)", index: "03",
+      nextLabel: "Next action", addLabel: "Add a task to hand off",
+      emptyTitle: "Nothing to hand off.", emptySub: "You're holding only what's yours.",
+    },
+    "not-urgent-not-important": {
+      name: "Eliminate", subtitle: "Not Urgent & Not Important", color: "var(--q-eliminate)", index: "04",
+      nextLabel: "Let go of", addLabel: "Add a task to drop",
+      emptyTitle: "Nothing to drop.", emptySub: "No busywork cluttering your day.",
+    },
+  };
+  const MATRIX_ORDER: TaskQuadrant[] = [
+    "urgent-important", "important-not-urgent", "urgent-not-important", "not-urgent-not-important",
+  ];
+
+  // Split a quadrant's visible tasks into the single "next action" + the "up next" list.
+  // Ordering: overdue first, then earliest due date, then oldest created.
+  const getQuadrantView = (quadrant: TaskQuadrant) => {
+    const startToday = startOfDay(new Date());
+    const sorted = [...getTasksByQuadrant(quadrant)].sort((a, b) => {
+      const aOver = a.dueDate && a.status !== "completed" && new Date(a.dueDate) < startToday ? 1 : 0;
+      const bOver = b.dueDate && b.status !== "completed" && new Date(b.dueDate) < startToday ? 1 : 0;
+      if (aOver !== bOver) return bOver - aOver;
+      if (a.dueDate && b.dueDate) return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
+      if (a.dueDate) return -1;
+      if (b.dueDate) return 1;
+      return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
+    });
+    // Prefer an incomplete task as the headline "next action"
+    const headlineIdx = sorted.findIndex(t => t.status !== "completed");
+    const idx = headlineIdx === -1 ? 0 : headlineIdx;
+    const nextAction = sorted[idx];
+    const upNext = sorted.filter((_, i) => i !== idx);
+    return { nextAction, upNext };
+  };
+
+  const isTaskOverdue = (task: Task) =>
+    !!task.dueDate && task.status !== "completed" && new Date(task.dueDate) < startOfDay(new Date());
+
+  // This week's focus (first active weekly goal) + its task progress
+  const focusGoal = currentWeekGoals.find(g => g.status === "active") ?? currentWeekGoals[0];
+  const focusCounts = focusGoal ? goalTaskCounts.get(focusGoal._id) : undefined;
+
+  // Weather summary for the masthead line
+  const weatherSummary = weatherData
+    ? {
+        temp: Math.round(weatherData.temp),
+        label: WEATHER_CODE_MAP[weatherData.weatherCode]?.label ?? "—",
+        feels: Math.round(weatherData.feelsLike),
+      }
+    : null;
+
+  // Payments summary for the slim due-bar
+  const paymentsSummary = (() => {
+    if (!paymentsData?.configured) return null;
+    const accounts = paymentsData.accounts ?? [];
+    const budgets = paymentsData.budgets ?? [];
+    const budgetTotal = budgets.reduce((s, b) => s + b.amount, 0);
+    const totalDue = Math.abs(accounts.reduce((s, a) => s + a.total, 0) + budgetTotal);
+    const count = accounts.length + budgets.length;
+    const income = paymentsData.totalIncome ?? 0;
+    const dayEnds = paymentsData.finalBalance ?? income - totalDue;
+    return { totalDue, count, income, dayEnds, hasDue: count > 0 };
+  })();
+
+  const fmtMoney = (n: number) =>
+    `$${Math.abs(n).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+
   return (
-    <div className={cn("min-h-screen", isDarkMode ? "bg-gray-950 text-white" : "bg-gray-50 text-gray-900")}>
-      {/* Header */}
-      <header className={cn(
-        "border-b sticky top-0 z-30 backdrop-blur-md",
-        isDarkMode ? "border-gray-800/50 bg-gray-900/80" : "border-gray-200/50 bg-white/80"
-      )}>
-        <div className="px-4 md:px-6 py-4">
-          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-            <div className="flex items-center gap-3">
-              <EisenqLogo size={36} />
-              <div className="flex items-baseline gap-2">
-                <h1 className="text-xl font-bold">EisenQ</h1>
-                <span className={cn("text-sm hidden sm:block", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                  Decide & Do
-                </span>
-              </div>
+    <div className="min-h-screen" style={{ color: "var(--ink)" }}>
+      {/* ===== Masthead ===== */}
+      <div className="mx-auto max-w-[1320px] px-5 md:px-10 pt-6 md:pt-8">
+        {/* top bar */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-7">
+          <div className="flex items-baseline gap-4">
+            <span style={{ fontFamily: "var(--font-serif)" }} className="text-[28px] font-medium leading-none">EisenQ</span>
+            <span className="text-[12px] tracking-[0.14em] uppercase" style={{ color: "var(--muted)" }}>Decide &amp; Do</span>
+          </div>
+          <div className="flex items-center gap-3 flex-1 md:flex-none justify-end">
+            <div className="searchbar flex items-center gap-2 flex-1 md:flex-none md:w-[280px] px-4 py-[9px] rounded-[11px]"
+              style={{ background: "var(--drawer)", border: "1px solid var(--field-bd)" }}>
+              <Search className="w-4 h-4" style={{ color: "var(--muted)" }} />
+              <input
+                type="text"
+                placeholder="Search tasks…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-transparent outline-none text-[13px] w-full"
+                style={{ color: "var(--ink)" }}
+              />
             </div>
-
-            <div className="flex items-center gap-2 md:gap-4">
-              <div className="relative flex-1 md:flex-none">
-                <Search className={cn("absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4", 
-                  isDarkMode ? "text-gray-400" : "text-gray-600")} />
-                <input
-                  type="text"
-                  placeholder="Search tasks..."
-                  value={searchQuery}
-                  onChange={(e) => setSearchQuery(e.target.value)}
-                  className={cn(
-                    "pl-10 pr-4 py-2 rounded-lg w-full md:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500",
-                    isDarkMode ? "bg-gray-800 text-white placeholder-gray-500" : "bg-gray-100 text-gray-900 placeholder-gray-400"
-                  )}
-                />
-              </div>
-              
-              <button
-                onClick={() => setIsCalendarDrawerOpen(true)}
-                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
-                title="Task Planning Calendar"
-              >
-                <CalendarDays className="w-5 h-5" />
+            <div className="flex gap-1">
+              <button className="navbtn" onClick={() => setIsCalendarDrawerOpen(true)} title="Today's calendar">
+                <CalendarDays className="w-[17px] h-[17px]" />
               </button>
-
-              <button
-                onClick={() => setIsInfoModalOpen(true)}
-                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
-                title="How the Eisenhower Matrix works"
-              >
-                <Info className="w-5 h-5" />
+              <button className="navbtn" onClick={() => setIsInfoModalOpen(true)} title="About the matrix"
+                style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: "18px" }}>
+                i
               </button>
-
-              <button
-                onClick={() => {
-                  const newValue = !isDarkMode;
-                  setDarkMode(newValue);
-                  localStorage.setItem("eisenq-dark-mode", String(newValue));
-                }}
-                className={cn("p-2 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
-              >
-                {isDarkMode ? <Sun className="w-5 h-5" /> : <Moon className="w-5 h-5" />}
+              <button className="navbtn" onClick={() => {
+                const newValue = !isDarkMode;
+                setDarkMode(newValue);
+                localStorage.setItem("eisenq-dark-mode", String(newValue));
+              }} title="Toggle theme">
+                {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-
-              <button
-                onClick={() => { setSettingsKeyInput(geminiApiKey); setIsSettingsOpen(true); }}
-                className={cn("p-2 rounded-lg hidden sm:block", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
-              >
-                <Settings className="w-5 h-5" />
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setIsSettingsOpen(true); }} title="Settings">
+                <Settings className="w-[17px] h-[17px]" />
               </button>
-              
-              <UserButton 
+              <UserButton
                 afterSignOutUrl="/sign-in"
-                appearance={{
-                  elements: {
-                    avatarBox: "w-8 h-8 md:w-10 md:h-10",
-                  },
-                }}
+                appearance={{ elements: { avatarBox: "w-[38px] h-[38px] rounded-[11px]" } }}
               />
             </div>
           </div>
         </div>
-      </header>
 
-      {/* Stats Cards */}
-      <div className="px-4 md:px-6 py-4 md:py-6">
-        {isLoading ? (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-            <div className="hidden md:block"><StatCardSkeleton darkMode={isDarkMode} /></div>
-            <div className="hidden md:block"><StatCardSkeleton darkMode={isDarkMode} /></div>
-            <StatCardSkeleton darkMode={isDarkMode} />
-            <StatCardSkeleton darkMode={isDarkMode} />
-          </div>
-        ) : (
-          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 md:gap-4">
-          {/* Total Tasks - hidden on small screens */}
-          <div className={cn("hidden md:block p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>Total Tasks</p>
-                <button
-                  onClick={() => setStatsDrawerType("total")}
-                  className="text-xl md:text-2xl font-bold mt-1 hover:text-blue-500 transition-colors cursor-pointer"
-                >
-                  {stats.total}
-                </button>
-              </div>
-              <TaskIcon className="w-6 h-6 md:w-8 md:h-8 text-blue-500" size={24} />
+        {/* greeting + weather line + this week's focus */}
+        <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-5 md:gap-10 mb-[22px] pb-[22px]"
+          style={{ borderBottom: "1px solid var(--line)" }}>
+          <div>
+            <div style={{ fontFamily: "var(--font-serif)" }} className="text-[27px] md:text-[34px] font-normal leading-[1.1]">
+              {greeting}{firstName ? `, ${firstName}` : ""}.
             </div>
-          </div>
-
-          {/* Completed - hidden on small screens */}
-          <div className={cn("hidden md:block p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>Completed</p>
-                <button
-                  onClick={() => setStatsDrawerType("completed")}
-                  className="text-xl md:text-2xl font-bold mt-1 hover:text-green-500 transition-colors cursor-pointer"
-                >
-                  {stats.completed}
-                </button>
-              </div>
-              <CheckCircle2 className="w-6 h-6 md:w-8 md:h-8 text-green-500" />
+            <div className="text-[14px] mt-1.5" style={{ color: "var(--muted)" }}>
+              {format(new Date(), "EEEE, MMMM d")} · here&apos;s what deserves your attention today.
             </div>
-          </div>
-
-          {/* High Priority - always visible */}
-          <div className={cn("p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>High Priority</p>
-                <button
-                  onClick={() => setStatsDrawerType("highPriority")}
-                  className="text-xl md:text-2xl font-bold mt-1 hover:text-red-500 transition-colors cursor-pointer"
-                >
-                  {stats.highPriority}
-                </button>
+            {weatherSummary && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-2 mt-3 text-[13px]" style={{ color: "var(--muted5)" }}>
+                <span className="flex items-center gap-1.5">
+                  <Cloud className="w-[15px] h-[15px]" />
+                  <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[17px] leading-none">
+                    {weatherSummary.temp}°
+                  </span>
+                  {weatherSummary.label} · feels {weatherSummary.feels}°
+                </span>
+                {clothingSuggestion && (
+                  <>
+                    <span className="w-[3px] h-[3px] rounded-full" style={{ background: "var(--muted6)" }} />
+                    <span>
+                      <span className="text-[10px] tracking-[0.1em] uppercase" style={{ color: "var(--muted2)" }}>Wear</span>
+                      &nbsp;&nbsp;{clothingSuggestion}
+                    </span>
+                  </>
+                )}
+                <span className="w-[3px] h-[3px] rounded-full" style={{ background: "var(--muted6)" }} />
+                <span className="flex items-center gap-1.5"><MapPin className="w-[13px] h-[13px]" />{weatherLocation}</span>
               </div>
-              <AlertCircle className="w-6 h-6 md:w-8 md:h-8 text-red-500" />
-            </div>
+            )}
           </div>
-
-          {/* This Week - always visible */}
-          <div className={cn("p-3 md:p-4 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-            <div className="flex items-center justify-between">
-              <div>
-                <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>This Week</p>
-                <button
-                  onClick={() => setStatsDrawerType("thisWeek")}
-                  className="text-xl md:text-2xl font-bold mt-1 hover:text-blue-500 transition-colors cursor-pointer"
-                >
-                  {stats.thisWeek}
+          {/* this week's focus */}
+          <div className="md:text-right md:shrink-0 md:pt-2 md:min-w-[220px]">
+            <div className="text-[10px] tracking-[0.14em] uppercase mb-[7px]" style={{ color: "var(--muted2)" }}>This week&apos;s focus</div>
+            {focusGoal ? (
+              <>
+                <div onClick={() => setIsGoalsExpanded(true)} style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }}
+                  className="text-[19px] leading-[1.25] cursor-pointer">
+                  {focusGoal.title}
+                </div>
+                {focusCounts && (
+                  <div className="flex items-center gap-2 md:justify-end mt-[9px]">
+                    <div className="w-[92px] h-[5px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
+                      <div className="h-full" style={{ width: `${focusCounts.total ? (focusCounts.done / focusCounts.total) * 100 : 0}%`, background: "var(--pill-active)" }} />
+                    </div>
+                    <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>{focusCounts.done} / {focusCounts.total}</span>
+                  </div>
+                )}
+              </>
+            ) : (
+              <>
+                <div onClick={() => setIsGoalsExpanded(true)} style={{ fontFamily: "var(--font-serif)", color: "var(--muted3)" }}
+                  className="text-[19px] leading-[1.25] cursor-pointer">
+                  No goal set yet
+                </div>
+                <button onClick={() => setIsGoalsExpanded(true)} className="inline-block mt-[9px] text-[12.5px] font-semibold" style={{ color: "var(--accent)" }}>
+                  + Add a focus ›
                 </button>
-              </div>
-              <Calendar className="w-6 h-6 md:w-8 md:h-8 text-blue-500" />
-            </div>
+              </>
+            )}
           </div>
         </div>
-        )}
       </div>
 
       {/* Stats Drawer */}
@@ -4810,373 +4872,131 @@ export default function HomePage() {
         </div>
       </div>
 
-      {/* Eisenhower Matrix */}
-      <div className="px-4 md:px-6 pb-4 md:pb-6">
+      {/* ===== Payments due bar ===== */}
+      {paymentsSummary && (
+        <div className="mx-auto max-w-[1320px] px-5 md:px-10 mb-1">
+          {paymentsSummary.hasDue ? (
+            <div className="flex flex-wrap items-center justify-between gap-x-[22px] gap-y-[14px] rounded-[14px] px-[22px] py-[15px]"
+              style={{ background: "var(--card)", border: "1px solid var(--card-bd)" }}>
+              <div className="flex items-center gap-[13px]">
+                <span className="text-[11px] tracking-[0.12em] uppercase" style={{ color: "var(--muted2)" }}>Payments due</span>
+                <span className="w-[13px] h-[13px] rounded-full shrink-0" style={{ border: "1.5px solid var(--accent)" }} />
+                <span className="text-[15px] font-semibold" style={{ color: "var(--ink)" }}>{fmtMoney(paymentsSummary.totalDue)}</span>
+                <span className="text-[12px]" style={{ color: "var(--muted)" }}>· {paymentsSummary.count} payment{paymentsSummary.count === 1 ? "" : "s"}</span>
+              </div>
+              <div className="flex items-center gap-5 text-[12.5px]" style={{ color: "var(--muted)" }}>
+                <span>Income <span style={{ color: "var(--ink3)" }}>{fmtMoney(paymentsSummary.income)}</span></span>
+                <span>Day ends <span className="font-semibold" style={{ color: paymentsSummary.dayEnds >= 0 ? "#16a34a" : "var(--tag-fg)" }}>
+                  {paymentsSummary.dayEnds >= 0 ? "+" : "−"}{fmtMoney(paymentsSummary.dayEnds)}
+                </span></span>
+              </div>
+            </div>
+          ) : (
+            <div className="flex items-center gap-[10px] px-1 pt-1.5 pb-0.5 text-[12.5px]" style={{ color: "var(--muted)" }}>
+              <span className="w-[15px] h-[15px] rounded-full flex items-center justify-center text-[9px]" style={{ border: "1.5px solid var(--accent)", color: "var(--accent)" }}>✓</span>
+              Nothing due today — day ends <span className="font-semibold" style={{ color: "var(--ink3)" }}>+{fmtMoney(paymentsSummary.income)}</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* ===== Priority Matrix (hero) ===== */}
+      <div className="mx-auto max-w-[1320px] px-5 md:px-10 pb-16">
+        <div className="flex flex-wrap items-baseline gap-3 mt-2 mb-[18px]">
+          <span style={{ fontFamily: "var(--font-serif)" }} className="text-[23px] md:text-[26px]">Priority Matrix</span>
+          <span className="text-[13px]" style={{ color: "var(--muted)" }}>four quadrants, one clear next move each</span>
+        </div>
         {isLoading ? (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-[22px]">
             {Array.from({ length: 4 }).map((_, i) => (
-              <QuadrantSkeleton key={i} darkMode={isDarkMode} />
+              <div key={i} className="rounded-2xl min-h-[300px]"
+                style={{ background: "var(--surface)", border: "1px solid var(--surface-bd)", boxShadow: "0 14px 34px -20px rgba(70,55,30,0.45)", padding: "18px 22px" }}>
+                <div className="skel" style={{ width: 110, height: 20, marginBottom: 22 }} />
+                <div className="skel" style={{ width: "100%", height: 46, marginBottom: 18 }} />
+                <div className="skel" style={{ width: "80%", height: 14, marginBottom: 11 }} />
+                <div className="skel" style={{ width: "70%", height: 14, marginBottom: 11 }} />
+                <div className="skel" style={{ width: "60%", height: 14 }} />
+              </div>
             ))}
           </div>
         ) : (
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-3 md:gap-4">
-            {(Object.keys(quadrantConfig) as TaskQuadrant[]).map((quadrant) => {
-            const config = quadrantConfig[quadrant];
-            const quadrantTasks = getTasksByQuadrant(quadrant);
-            
-            return (
-              <div
-                key={quadrant}
-                className={cn(
-                  "rounded-lg p-3 md:p-4 min-h-[250px] md:min-h-[300px]",
-                  isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200"
-                )}
-              >
-                <div className={cn("flex items-center justify-between mb-3 md:mb-4 p-2 md:p-3 rounded-lg", config.bgColor)}>
-                  <div>
-                    <h3 className="font-semibold text-base md:text-lg">{config.title}</h3>
-                    <p className={cn("text-xs md:text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
-                      {config.subtitle}
-                    </p>
-                  </div>
-                  <div className="flex items-center gap-1 md:gap-2">
-                    <button
-                      onClick={() => toggleCompletedVisibility(quadrant)}
-                      className={cn(
-                        "p-1 md:p-1.5 rounded-lg transition-colors",
-                        isDarkMode ? "hover:bg-black/20 text-gray-400 hover:text-gray-200" : "hover:bg-white/30 text-gray-600 hover:text-gray-800"
-                      )}
-                      title={hideCompleted[quadrant] ? "Show completed tasks" : "Hide completed tasks"}
-                    >
-                      {hideCompleted[quadrant] ? (
-                        <EyeOff className="w-3 h-3 md:w-4 md:h-4" />
-                      ) : (
-                        <Eye className="w-3 h-3 md:w-4 md:h-4" />
-                      )}
-                    </button>
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  {quadrantLoading[quadrant] ? (
-                    <>
-                      {Array.from({ length: Math.max(3, quadrantTasks.length) }).map((_, i) => (
-                        <TaskCardSkeleton key={i} darkMode={isDarkMode} />
-                      ))}
-                    </>
-                  ) : quadrantTasks.length === 0 ? (
-                    <div className="text-center py-8">
-                      <button
-                        onClick={() => openModalForQuadrant(quadrant)}
-                        className={cn(
-                          "p-3 rounded-full mx-auto mb-3",
-                          isDarkMode ? "bg-gray-800 hover:bg-gray-700" : "bg-gray-100 hover:bg-gray-200"
-                        )}
-                      >
-                        <Plus className="w-6 h-6" />
-                      </button>
-                      <p className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                        No tasks in this quadrant
-                      </p>
-                      <p className={cn("text-xs mt-1", isDarkMode ? "text-gray-600" : "text-gray-500")}>
-                        Click the + button to add one
-                      </p>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-[22px]">
+            {MATRIX_ORDER.map((quadrant) => {
+              const meta = MATRIX_META[quadrant];
+              const { nextAction, upNext } = getQuadrantView(quadrant);
+              const quickVal = quickTaskInputs[quadrant];
+              return (
+                <div key={quadrant} className="rounded-2xl overflow-hidden flex flex-col min-h-[300px]"
+                  style={{ background: "var(--surface)", border: "1px solid var(--surface-bd)", boxShadow: "0 14px 34px -20px rgba(70,55,30,0.45)" }}>
+                  {/* quadrant header */}
+                  <div className="flex items-start justify-between px-[22px] py-[15px]" style={{ borderBottom: "1px solid var(--line2)" }}>
+                    <div>
+                      <div className="flex items-center gap-[9px]">
+                        <span className="w-[9px] h-[9px] rounded-full shrink-0" style={{ background: meta.color }} />
+                        <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[24px] leading-tight">{meta.name}</span>
+                      </div>
+                      <div className="text-[11px] tracking-[0.12em] uppercase mt-[3px] ml-[18px]" style={{ color: "var(--muted3)" }}>{meta.subtitle}</div>
                     </div>
-                  ) : (
-                    quadrantTasks.map((task) => {
-                      const taskOverdue = !!task.dueDate && task.status !== "completed" && new Date(task.dueDate) < startOfDay(new Date());
-                      return (
-                      <div
-                        key={task._id}
-                        className={cn(
-                          "p-2 md:p-3 rounded-lg border transition-all",
-                          taskOverdue
-                            ? darkMode
-                              ? "bg-gray-800 border-red-500/40 hover:border-red-500/60"
-                              : "bg-gray-50 border-red-300 hover:border-red-400"
-                            : darkMode
-                              ? "bg-gray-800 border-gray-700 hover:border-gray-600"
-                              : "bg-gray-50 border-gray-200 hover:border-gray-300"
-                        )}
-                      >
-                        <div className="flex items-start justify-between">
-                          <div className="flex items-start gap-2 md:gap-3 flex-1">
-                            <button
-                              onClick={() => handleToggleComplete(task)}
-                              disabled={taskOperationLoading[`toggle-${task._id}`]}
-                              className={cn(
-                                "mt-0.5 rounded-full transition-opacity",
-                                task.status === "completed" 
-                                  ? "text-green-500" 
-                                  : isDarkMode ? "text-gray-400" : "text-gray-500",
-                                taskOperationLoading[`toggle-${task._id}`] && "opacity-50 cursor-not-allowed"
-                              )}
-                            >
-                              {task.status === "completed" ? (
-                                <CheckCircle2 className="w-4 h-4 md:w-5 md:h-5" />
-                              ) : (
-                                <div className="w-4 h-4 md:w-5 md:h-5 rounded-full border-2 border-current" />
-                              )}
-                            </button>
-                            <div
-                              className="flex-1 cursor-pointer"
-                              onClick={() => void openTaskForEdit(task)}
-                            >
-                              <p className={cn(
-                                "font-medium text-sm md:text-base",
-                                task.status === "completed" && "line-through opacity-60"
-                              )}>
-                                {task.title}
-                              </p>
-                              {task.description && (
-                                <p className={cn(
-                                  "text-xs md:text-sm mt-1",
-                                  isDarkMode ? "text-gray-400" : "text-gray-600"
-                                )}>
-                                  {task.description}
-                                </p>
-                              )}
-                              <div className="flex flex-wrap items-center gap-2 mt-2">
-                                {(task.priority === "high" || task.quadrant === "urgent-important") && (
-                                  <span className="text-xs px-2 py-1 rounded w-fit bg-red-500/20 text-red-400">
-                                    High Priority
-                                  </span>
-                                )}
-                                {task.dueDate ? (
-                                  <>
-                                    <span className={cn(
-                                      "text-xs",
-                                      taskOverdue ? "text-red-500 font-medium" : isDarkMode ? "text-gray-500" : "text-gray-400"
-                                    )}>
-                                      {format(new Date(task.dueDate), "MMM dd")} • {format(new Date(task.dueDate), "HH:mm")}
-                                    </span>
-                                    {taskOverdue && (
-                                      <>
-                                        <span className="text-xs px-2 py-0.5 rounded flex items-center gap-1 bg-red-500/20 text-red-500">
-                                          <AlertCircle className="w-3 h-3" />
-                                          Overdue
-                                        </span>
-                                        <button
-                                          onClick={(e) => { e.stopPropagation(); void rescheduleTaskToTomorrow(task); }}
-                                          className={cn(
-                                            "text-xs px-2 py-0.5 rounded flex items-center gap-1 transition-colors",
-                                            darkMode
-                                              ? "bg-blue-600/20 text-blue-400 hover:bg-blue-600/30"
-                                              : "bg-blue-100 text-blue-700 hover:bg-blue-200"
-                                          )}
-                                        >
-                                          <Calendar className="w-3 h-3" />
-                                          Reschedule
-                                        </button>
-                                      </>
-                                    )}
-                                  </>
-                                ) : task.quadrant === "important-not-urgent" ? (
-                                  <button
-                                    onClick={() => void openTaskForEdit(task)}
-                                    className={cn(
-                                      "text-xs px-2 py-1 rounded flex items-center gap-1 transition-colors",
-                                      darkMode
-                                        ? "bg-blue-600/20 text-blue-400 hover:bg-blue-600/30"
-                                        : "bg-blue-100 text-blue-700 hover:bg-blue-200"
-                                    )}
-                                  >
-                                    <Calendar className="w-3 h-3" />
-                                    Schedule
-                                  </button>
-                                ) : null}
-                                {task.duration && (
-                                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                    {task.duration >= 60 ? `${Math.floor(task.duration / 60)}h${task.duration % 60 ? ` ${task.duration % 60}m` : ''}` : `${task.duration}m`}
-                                  </span>
-                                )}
-                                {task.subtaskCount !== undefined && task.subtaskCount > 0 && (
-                                  <span className={cn(
-                                    "text-xs flex items-center gap-1",
-                                    task.subtaskCompletedCount === task.subtaskCount
-                                      ? "text-green-500"
-                                      : isDarkMode ? "text-gray-500" : "text-gray-400"
-                                  )}>
-                                    <CheckCircle2 className="w-3 h-3" />
-                                    {task.subtaskCompletedCount}/{task.subtaskCount}
-                                  </span>
-                                )}
-                                {task.goalId && goalsById.has(task.goalId) && (
-                                  <span
-                                    className={cn("text-xs flex items-center gap-1", isDarkMode ? "text-emerald-500" : "text-emerald-600")}
-                                    title={goalsById.get(task.goalId)!.title}
-                                  >
-                                    <Target className="w-3 h-3 shrink-0" />
-                                    <span className="max-w-[110px] truncate">{goalsById.get(task.goalId)!.title}</span>
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-                          </div>
-                          <div className="flex items-center gap-1">
-                            {task.dueDate && (
-                              <DropdownMenu.Root>
-                                <DropdownMenu.Trigger asChild>
-                                  <button
-                                    title="Sync to calendar"
-                                    className={cn(
-                                      "p-1 md:p-1.5 rounded text-green-500",
-                                      isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"
-                                    )}
-                                  >
-                                    <Share2 className="w-3 h-3 md:w-4 md:h-4" />
-                                  </button>
-                                </DropdownMenu.Trigger>
-                                <DropdownMenu.Portal>
-                                  <DropdownMenu.Content
-                                    className={cn(
-                                      "min-w-[180px] rounded-lg p-1.5 shadow-lg z-[200]",
-                                      isDarkMode ? "bg-gray-800 border border-gray-700" : "bg-white border border-gray-200"
-                                    )}
-                                    sideOffset={5}
-                                  >
-                                    {([
-                                      { provider: "google", label: "Google Calendar", color: "text-red-500" },
-                                      { provider: "outlook", label: "Outlook.com", color: "text-blue-500" },
-                                      { provider: "office365", label: "Office 365", color: "text-blue-600" },
-                                      { provider: "yahoo", label: "Yahoo Calendar", color: "text-purple-500" },
-                                    ] as const).map((item) => (
-                                      <DropdownMenu.Item
-                                        key={item.provider}
-                                        className={cn(
-                                          "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                                          isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
-                                        )}
-                                        onSelect={() => exportTaskToCalendar(task, item.provider)}
-                                      >
-                                        <Calendar className={cn("w-4 h-4", item.color)} />
-                                        {item.label}
-                                      </DropdownMenu.Item>
-                                    ))}
-                                    <DropdownMenu.Separator className={cn("h-px my-1", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
-                                    <DropdownMenu.Item
-                                      className={cn(
-                                        "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                                        isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
-                                      )}
-                                      onSelect={() => exportTaskToCalendar(task, "ics")}
-                                    >
-                                      <Download className="w-4 h-4 text-gray-500" />
-                                      Download .ics
-                                    </DropdownMenu.Item>
-                                  </DropdownMenu.Content>
-                                </DropdownMenu.Portal>
-                              </DropdownMenu.Root>
+                    <span style={{ fontFamily: "var(--font-serif)", color: "var(--num)" }} className="text-[15px]">{meta.index}</span>
+                  </div>
+                  {/* quadrant body */}
+                  <div className="px-[22px] pt-5 pb-[22px] flex-1 flex flex-col">
+                    {nextAction ? (
+                      <>
+                        <div style={{ borderLeft: `2px solid ${meta.color}`, paddingLeft: 14 }} className="cursor-pointer" onClick={() => void openTaskForEdit(nextAction)}>
+                          <span className="text-[11px] tracking-[0.1em] uppercase" style={{ color: "var(--muted3)" }}>{meta.nextLabel}</span>
+                          <div className="text-[17px] font-semibold mt-[3px]" style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
+                            {nextAction.title}
+                            {isTaskOverdue(nextAction) && nextAction.dueDate && (
+                              <span className="text-[12px] font-normal" style={{ color: "var(--tag-fg)" }}> · overdue {format(new Date(nextAction.dueDate), "MMM d")}</span>
                             )}
-                            <button
-                              onClick={() => handleDeleteTask(task._id)}
-                              disabled={taskOperationLoading[`delete-${task._id}`]}
-                              className={cn(
-                                "p-1 md:p-1.5 rounded hover:bg-red-500/20 text-red-400 transition-opacity",
-                                isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50",
-                                taskOperationLoading[`delete-${task._id}`] && "opacity-50 cursor-not-allowed"
-                              )}
-                            >
-                              <Trash2 className="w-3 h-3 md:w-4 md:h-4" />
-                            </button>
-                            <DropdownMenu.Root>
-                              <DropdownMenu.Trigger asChild>
-                                <button className={cn(
-                                  "p-1 md:p-1.5 rounded",
-                                  isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-100"
-                                )}>
-                                  <MoreVertical className="w-3 h-3 md:w-4 md:h-4" />
-                                </button>
-                              </DropdownMenu.Trigger>
-                              <DropdownMenu.Portal>
-                                <DropdownMenu.Content
-                                  className={cn(
-                                    "min-w-[200px] rounded-lg p-1 shadow-lg z-50",
-                                    darkMode 
-                                      ? "bg-gray-800 border border-gray-700" 
-                                      : "bg-white border border-gray-200"
-                                  )}
-                                  sideOffset={5}
-                                >
-                                  <DropdownMenu.Label className={cn(
-                                    "px-2 py-1.5 text-xs font-semibold",
-                                    isDarkMode ? "text-gray-400" : "text-gray-500"
-                                  )}>
-                                    Move to
-                                  </DropdownMenu.Label>
-                                  <DropdownMenu.Separator className={cn(
-                                    "my-1 h-px",
-                                    isDarkMode ? "bg-gray-700" : "bg-gray-200"
-                                  )} />
-                                  
-                                  {(Object.keys(quadrantConfig) as TaskQuadrant[])
-                                    .filter(q => q !== task.quadrant)
-                                    .map((q) => {
-                                      const config = quadrantConfig[q];
-                                      return (
-                                        <DropdownMenu.Item
-                                          key={q}
-                                          className={cn(
-                                            "px-2 py-2 text-sm rounded cursor-pointer flex items-center gap-2",
-                                            darkMode 
-                                              ? "hover:bg-gray-700 text-gray-200" 
-                                              : "hover:bg-gray-100 text-gray-700"
-                                          )}
-                                          onSelect={() => handleMoveTask(task, q)}
-                                        >
-                                          <div className={cn(
-                                            "w-3 h-3 rounded-full",
-                                            q === "urgent-important" ? "bg-red-500" :
-                                            q === "important-not-urgent" ? "bg-yellow-500" :
-                                            q === "urgent-not-important" ? "bg-blue-500" :
-                                            "bg-green-500"
-                                          )} />
-                                          <span>{config.title}</span>
-                                        </DropdownMenu.Item>
-                                      );
-                                    })}
-                                </DropdownMenu.Content>
-                              </DropdownMenu.Portal>
-                            </DropdownMenu.Root>
                           </div>
                         </div>
+                        {upNext.length > 0 && (
+                          <div className="mt-4 pt-[15px]" style={{ borderTop: "1px solid var(--line2)" }}>
+                            <div className="text-[10px] tracking-[0.12em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Up next</div>
+                            <div className="flex flex-col gap-[11px]">
+                              {upNext.slice(0, 6).map((t) => (
+                                <div key={t._id} className="flex items-center gap-[11px]">
+                                  <span className={cn("qcheck", t.status === "completed" && "checked")} onClick={() => void handleToggleComplete(t)} />
+                                  <span className="text-[14px] cursor-pointer" onClick={() => void openTaskForEdit(t)}
+                                    style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
+                                    {t.title}
+                                  </span>
+                                </div>
+                              ))}
+                            </div>
+                          </div>
+                        )}
+                      </>
+                    ) : (
+                      <div className="pt-[18px] pb-2">
+                        <div className="text-[15px]" style={{ color: "var(--ink3)" }}>{meta.emptyTitle}</div>
+                        <div className="text-[12.5px] mt-1" style={{ color: "var(--muted)" }}>{meta.emptySub}</div>
                       </div>
-                      );
-                    })
-                  )}
-                </div>
-
-                {/* Quick Add Task Input */}
-                <div className="mt-3">
-                  <div className="relative">
-                    <Plus className={cn(
-                      "absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4",
-                      isDarkMode ? "text-gray-500" : "text-gray-400"
-                    )} />
-                    <input
-                      type="text"
-                      placeholder={`Add a task to ${config.title}...`}
-                      value={quickTaskInputs[quadrant]}
-                      onChange={(e) => setQuickTaskInputs(prev => ({ ...prev, [quadrant]: e.target.value }))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          void handleQuickAddTask(quadrant, quickTaskInputs[quadrant]);
-                        }
-                      }}
-                      disabled={taskOperationLoading[`quickAdd-${quadrant}`]}
-                      className={cn(
-                        "w-full pl-10 pr-3 py-2 text-sm rounded-lg border transition-colors focus:outline-none focus:ring-2 focus:ring-blue-500",
-                        darkMode 
-                          ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500 hover:border-gray-600" 
-                          : "bg-white border-gray-300 text-gray-900 placeholder-gray-400 hover:border-gray-400",
-                        taskOperationLoading[`quickAdd-${quadrant}`] && "opacity-50 cursor-not-allowed"
-                      )}
-                    />
+                    )}
+                    {/* quick add */}
+                    <div className="mt-auto pt-[18px]">
+                      <div className="hovrow flex items-center gap-[9px] px-3 py-[9px] rounded-[10px]"
+                        style={{ border: "1px dashed var(--dash)" }}>
+                        <span className="text-[15px] leading-none" style={{ color: "var(--muted3)" }}>+</span>
+                        <input
+                          type="text"
+                          value={quickVal}
+                          placeholder={meta.addLabel}
+                          onChange={(e) => setQuickTaskInputs(prev => ({ ...prev, [quadrant]: e.target.value }))}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && quickVal.trim()) void handleQuickAddTask(quadrant, quickVal);
+                          }}
+                          className="bg-transparent outline-none text-[13px] w-full placeholder:text-[color:var(--muted3)]"
+                          style={{ color: "var(--ink)" }}
+                        />
+                      </div>
+                    </div>
                   </div>
                 </div>
-              </div>
-            );
-          })}
+              );
+            })}
           </div>
         )}
       </div>
@@ -5184,7 +5004,9 @@ export default function HomePage() {
       {/* Floating Action Button */}
       <button
         onClick={() => openModalForQuadrant("urgent-important")}
-        className="fixed bottom-20 right-4 md:bottom-24 md:right-6 p-3 md:p-4 bg-blue-600 text-white rounded-full shadow-lg hover:bg-blue-700 transition-colors z-40"
+        className="cta fixed bottom-20 right-4 md:bottom-24 md:right-6 p-3 md:p-4 rounded-full shadow-lg transition-colors z-40"
+        style={{ background: "var(--btn-primary)", color: "var(--btn-fg)" }}
+        title="Add a task"
       >
         <Plus className="w-5 h-5 md:w-6 md:h-6" />
       </button>

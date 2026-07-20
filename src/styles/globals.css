@@ -3,6 +3,187 @@
 @theme {
   --font-sans: var(--font-inter), ui-sans-serif, system-ui, sans-serif,
     "Apple Color Emoji", "Segoe UI Emoji", "Segoe UI Symbol", "Noto Color Emoji";
+  --font-serif: var(--font-newsreader), ui-serif, Georgia, serif;
+}
+
+/* ===== "Calm Editorial" design tokens ===== */
+:root {
+  --bg: #f1ecdc;
+  --card: #faf6ec;
+  --card-bd: #e8dece;
+  --surface: #fffdf8;
+  --surface-bd: #ece1cf;
+  --drawer: #faf6ee;
+  --drawer-bd: #e6ddcd;
+  --ink: #2c2419;
+  --ink2: #4a4234;
+  --ink3: #5f5747;
+  --ink4: #6a6252;
+  --muted: #a89a80;
+  --muted2: #b6a88c;
+  --muted3: #b3a892;
+  --muted4: #c3b9a3;
+  --muted5: #8a7c62;
+  --muted6: #cdbfa5;
+  --line: #ddd2bf;
+  --line2: #f0ece2;
+  --line3: #ece3d2;
+  --chip: #f0e8d8;
+  --tint: #f3ede0;
+  --field: #ffffff;
+  --field-bd: #e3d9c8;
+  --num: #d8cfbe;
+  --dash: #e5dbc8;
+  --dash2: #e0d5c1;
+  --strike: #8a8069;
+  --form-bg: #fbf8f2;
+  --form-bd: #ece3d4;
+  --hover: #f5efe3;
+  --check-bd: #d8ccb6;
+  --optional: #c9bda3;
+  --btn-fg: #faf6ee;
+  --btn-primary: #2c2419;
+  --pill-active: #7f6a45;
+  --accent: #7f6a45;
+  --accent-h: #6b3d0a;
+  --overlay: rgba(44, 36, 25, 0.32);
+  --tag-bg: #fee2e2;
+  --tag-fg: #b91c1c;
+  /* Semantic quadrant colors — identical in both themes */
+  --q-do-first: #dc2626;
+  --q-schedule: #ca8a04;
+  --q-delegate: #2563eb;
+  --q-eliminate: #16a34a;
+}
+
+.dark {
+  --bg: #15130d;
+  --card: #1d1a13;
+  --card-bd: #2e281d;
+  --surface: #201d15;
+  --surface-bd: #36301f;
+  --drawer: #1d1a13;
+  --drawer-bd: #2e281d;
+  --ink: #efe8d6;
+  --ink2: #d4cab4;
+  --ink3: #bcb299;
+  --ink4: #b0a68e;
+  --muted: #948a74;
+  --muted2: #8a8068;
+  --muted3: #8a8068;
+  --muted4: #7a7362;
+  --muted5: #9a8f78;
+  --muted6: #5a5342;
+  --line: #2e281d;
+  --line2: #29251b;
+  --line3: #2e281d;
+  --chip: #29251b;
+  --tint: #29251b;
+  --field: #15130d;
+  --field-bd: #36301f;
+  --num: #4a4331;
+  --dash: #36301f;
+  --dash2: #36301f;
+  --strike: #7a7362;
+  --form-bg: #211e16;
+  --form-bd: #36301f;
+  --hover: #29251b;
+  --check-bd: #4a4331;
+  --optional: #7a7362;
+  --btn-fg: #faf3e6;
+  --btn-primary: #8a6d3f;
+  --pill-active: #8a6d3f;
+  --accent: #c9a86a;
+  --accent-h: #d8b87a;
+  --overlay: rgba(0, 0, 0, 0.55);
+  --tag-bg: rgba(220, 38, 38, 0.2);
+  --tag-fg: #e8a6a6;
+}
+
+/* Warm paper grain over the page background */
+body.paper {
+  background-color: var(--bg);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
+  background-blend-mode: multiply;
+  color: var(--ink);
+}
+.dark body.paper {
+  background-blend-mode: screen;
+}
+
+/* Editorial helper primitives */
+.qcheck {
+  width: 15px;
+  height: 15px;
+  border: 1.5px solid var(--check-bd);
+  border-radius: 50%;
+  flex-shrink: 0;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease;
+}
+.qcheck.checked {
+  border-color: var(--accent);
+  background: var(--pill-active);
+}
+.navbtn {
+  width: 38px;
+  height: 38px;
+  border-radius: 11px;
+  background: var(--drawer);
+  border: 1px solid var(--field-bd);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted5);
+  font-size: 15px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+}
+.navbtn:hover {
+  background: var(--chip);
+}
+.cta {
+  transition: filter 0.15s ease, transform 0.1s ease;
+}
+.cta:hover {
+  filter: brightness(0.93);
+}
+.cta:active {
+  transform: translateY(1px);
+}
+.hovrow {
+  transition: background 0.12s ease;
+}
+.hovrow:hover {
+  background: var(--hover);
+}
+.searchbar {
+  transition: border-color 0.15s ease;
+}
+.searchbar:hover {
+  border-color: var(--muted3);
+}
+@keyframes pulse {
+  0%,
+  100% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.8;
+  }
+}
+.skel {
+  background: var(--line2);
+  border-radius: 7px;
+  animation: pulse 1.4s ease-in-out infinite;
+}
+@keyframes drawerIn {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
 }
 
 @keyframes shimmer {
