@@ -2903,19 +2903,19 @@ export default function HomePage() {
               "data-[state=open]:animate-in data-[state=closed]:animate-out",
               "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
               "duration-300 ease-in-out",
-              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+              "bg-[var(--drawer)] text-[var(--ink)]"
             )}
           >
             <div className="flex flex-col h-full">
               {/* Drawer Header */}
-              <div className={cn("flex items-center justify-between p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
+              <div className={cn("flex items-center justify-between p-4 border-b", "border-[var(--drawer-bd)]")}>
                 <div className="flex items-center gap-3">
                   <div className="p-2 rounded-lg bg-[#7f6a45]/20">
                     <CalendarDays className="w-5 h-5 text-[var(--accent)]" />
                   </div>
                   <div>
                     <Dialog.Title className="text-lg font-semibold">Task Planning</Dialog.Title>
-                    <Dialog.Description className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                    <Dialog.Description className={cn("text-sm", "text-[var(--ink3)]")}>
                       Schedule and organize your tasks
                     </Dialog.Description>
                   </div>
@@ -2924,7 +2924,7 @@ export default function HomePage() {
                   <button
                     className={cn(
                       "p-2 rounded-lg transition-colors",
-                      isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
+                      "hover:bg-[var(--hover)] text-[var(--ink3)]"
                     )}
                   >
                     <X className="w-5 h-5" />
@@ -2933,15 +2933,15 @@ export default function HomePage() {
               </div>
 
               {/* View Tabs */}
-              <div className={cn("p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                <div className={cn("flex rounded-lg p-1", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
+              <div className={cn("p-4 border-b", "border-[var(--drawer-bd)]")}>
+                <div className={cn("flex rounded-lg p-1", "bg-[var(--chip)]")}>
                   <button
                     onClick={() => setCalendarView("day")}
                     className={cn(
                       "flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
                       calendarView === "day"
                         ? "bg-[var(--btn-primary)] text-[var(--btn-fg)]"
-                        : isDarkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
+                        : "text-[var(--ink3)] hover:text-[var(--ink)]"
                     )}
                   >
                     <Clock className="w-4 h-4" />
@@ -2953,7 +2953,7 @@ export default function HomePage() {
                       "flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
                       calendarView === "week"
                         ? "bg-[var(--btn-primary)] text-[var(--btn-fg)]"
-                        : isDarkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
+                        : "text-[var(--ink3)] hover:text-[var(--ink)]"
                     )}
                   >
                     <CalendarRange className="w-4 h-4" />
@@ -2965,7 +2965,7 @@ export default function HomePage() {
                       "flex-1 px-4 py-2 rounded-md text-sm font-medium transition-colors flex items-center justify-center gap-2",
                       calendarView === "month"
                         ? "bg-[var(--btn-primary)] text-[var(--btn-fg)]"
-                        : isDarkMode ? "text-gray-400 hover:text-white" : "text-gray-600 hover:text-gray-900"
+                        : "text-[var(--ink3)] hover:text-[var(--ink)]"
                     )}
                   >
                     <Calendar className="w-4 h-4" />
@@ -2982,7 +2982,7 @@ export default function HomePage() {
                     onClick={() => navigateCalendar("prev")}
                     className={cn(
                       "p-2 rounded-lg transition-colors",
-                      isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
+                      "hover:bg-[var(--hover)] text-[var(--ink3)]"
                     )}
                   >
                     <ChevronLeft className="w-5 h-5" />
@@ -2992,7 +2992,7 @@ export default function HomePage() {
                       {calendarView === "day" && format(selectedDate, "EEEE, MMMM d, yyyy")}
                       {calendarView === "week" && `${format(startOfWeek(selectedDate), "MMM d")} - ${format(endOfWeek(selectedDate), "MMM d, yyyy")}`}
                       {calendarView === "month" && format(selectedDate, "MMMM yyyy")}
-                      {planningLoading && <Loader2 className="w-4 h-4 animate-spin text-indigo-400" />}
+                      {planningLoading && <Loader2 className="w-4 h-4 animate-spin text-[var(--muted)]" />}
                     </h3>
                     {isToday(selectedDate) && calendarView === "day" && (
                       <span className="text-xs text-[var(--accent)] font-medium">Today</span>
@@ -3002,7 +3002,7 @@ export default function HomePage() {
                     onClick={() => navigateCalendar("next")}
                     className={cn(
                       "p-2 rounded-lg transition-colors",
-                      isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
+                      "hover:bg-[var(--hover)] text-[var(--ink3)]"
                     )}
                   >
                     <ChevronRight className="w-5 h-5" />
@@ -3017,12 +3017,12 @@ export default function HomePage() {
                   return (
                   <div className="space-y-3">
                     {!showEventSkeleton && dayTasks.length === 0 && dayEvents.length === 0 ? (
-                      <div className={cn("text-center py-12 rounded-lg", isDarkMode ? "bg-gray-800" : "bg-gray-50")}>
-                        <CalendarDays className={cn("w-12 h-12 mx-auto mb-3", isDarkMode ? "text-gray-600" : "text-gray-400")} />
-                        <p className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                      <div className={cn("text-center py-12 rounded-lg", "bg-[var(--tint)]")}>
+                        <CalendarDays className={cn("w-12 h-12 mx-auto mb-3", "text-[var(--muted)]")} />
+                        <p className={cn("text-sm", "text-[var(--ink3)]")}>
                           No tasks scheduled for this day
                         </p>
-                        <p className={cn("text-xs mt-1", isDarkMode ? "text-gray-500" : "text-gray-500")}>
+                        <p className={cn("text-xs mt-1", "text-[var(--muted)]")}>
                           Add tasks with due dates to see them here
                         </p>
                       </div>
@@ -3032,14 +3032,14 @@ export default function HomePage() {
                         <div
                           key={`event-skeleton-${i}`}
                           className={cn(
-                            "flex items-start gap-4 p-4 rounded-lg border-l-4 border-l-indigo-200",
-                            isDarkMode ? "bg-gray-800" : "bg-gray-50"
+                            "flex items-start gap-4 p-4 rounded-lg border-l-4 border-l-[var(--field-bd)]",
+                            "bg-[var(--tint)]"
                           )}
                         >
-                          <div className={cn("h-7 w-16 rounded-lg animate-pulse flex-shrink-0", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
+                          <div className={cn("h-7 w-16 rounded-lg animate-pulse flex-shrink-0", "bg-[var(--line3)]")} />
                           <div className="flex-1 space-y-2">
-                            <div className={cn("h-4 w-1/2 rounded animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
-                            <div className={cn("h-3 w-24 rounded animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
+                            <div className={cn("h-4 w-1/2 rounded animate-pulse", "bg-[var(--line3)]")} />
+                            <div className={cn("h-3 w-24 rounded animate-pulse", "bg-[var(--line3)]")} />
                           </div>
                         </div>
                       ))}
@@ -3047,27 +3047,27 @@ export default function HomePage() {
                         <div
                           key={ev.id}
                           className={cn(
-                            "flex items-start gap-4 p-4 rounded-lg border-l-4 border-l-indigo-500",
-                            isDarkMode ? "bg-gray-800" : "bg-gray-50"
+                            "flex items-start gap-4 p-4 rounded-lg border-l-4 border-l-[var(--accent)]",
+                            "bg-[var(--tint)]"
                           )}
                         >
                           <div className={cn(
                             "flex-shrink-0 px-3 py-1 rounded-lg text-sm font-medium",
-                            isDarkMode ? "bg-gray-700" : "bg-white border border-gray-200"
+                            "bg-[var(--field)] border border-[var(--field-bd)]"
                           )}>
                             {ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")}
                           </div>
                           <div className="flex-1">
                             <h4 className="font-medium flex items-center gap-1.5">
-                              <Calendar className="w-3.5 h-3.5 text-indigo-500 flex-shrink-0" />
+                              <Calendar className="w-3.5 h-3.5 text-[var(--accent)] flex-shrink-0" />
                               {ev.title}
                             </h4>
                             {ev.location && (
-                              <p className={cn("text-sm mt-1", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                              <p className={cn("text-sm mt-1", "text-[var(--ink3)]")}>
                                 {ev.location}
                               </p>
                             )}
-                            <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded mt-2 bg-indigo-500/20 text-indigo-400">
+                            <span className="inline-flex items-center gap-1 text-xs px-2 py-1 rounded mt-2 bg-[#7f6a45]/15 text-[var(--accent)]">
                               <Calendar className="w-3 h-3" />
                               {ev.calendar}
                             </span>
@@ -3084,18 +3084,18 @@ export default function HomePage() {
                             task.quadrant === "important-not-urgent" && "border-l-yellow-500",
                             task.quadrant === "urgent-not-important" && "border-l-blue-500",
                             task.quadrant === "not-urgent-not-important" && "border-l-green-500",
-                            isDarkMode ? "bg-gray-800 hover:bg-gray-750" : "bg-gray-50 hover:bg-gray-100"
+                            "bg-[var(--tint)] hover:bg-[var(--hover)]"
                           )}
                         >
                           <div className={cn(
                             "flex-shrink-0 px-3 py-1 rounded-lg text-sm font-medium",
-                            isDarkMode ? "bg-gray-700" : "bg-white border border-gray-200"
+                            "bg-[var(--field)] border border-[var(--field-bd)]"
                           )}>
                             {task.dueDate ? format(new Date(task.dueDate), "HH:mm") : "--:--"}
                           </div>
                           <div className="flex-1">
                             <h4 className="font-medium">{task.title}</h4>
-                            <p className={cn("text-sm mt-1", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                            <p className={cn("text-sm mt-1", "text-[var(--ink3)]")}>
                               {task.description}
                             </p>
                             <div className="flex items-center gap-3 mt-2">
@@ -3110,7 +3110,7 @@ export default function HomePage() {
                                 {task.priority}
                               </span>
                               {task.duration && (
-                                <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                                <span className={cn("text-xs", "text-[var(--muted)]")}>
                                   {task.duration} min
                                 </span>
                               )}
@@ -3119,7 +3119,7 @@ export default function HomePage() {
                                   "text-xs flex items-center gap-1",
                                   task.subtaskCompletedCount === task.subtaskCount
                                     ? "text-green-500"
-                                    : isDarkMode ? "text-gray-500" : "text-gray-400"
+                                    : "text-[var(--muted)]"
                                 )}>
                                   <CheckCircle2 className="w-3 h-3" />
                                   {task.subtaskCompletedCount}/{task.subtaskCount}
@@ -3140,7 +3140,7 @@ export default function HomePage() {
                   <div className="grid grid-cols-7 gap-2">
                     {/* Day headers */}
                     {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                      <div key={day} className={cn("text-center text-xs font-medium py-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                      <div key={day} className={cn("text-center text-xs font-medium py-2", "text-[var(--muted)]")}>
                         {day}
                       </div>
                     ))}
@@ -3160,15 +3160,13 @@ export default function HomePage() {
                           }}
                           className={cn(
                             "min-h-[120px] p-2 rounded-lg cursor-pointer transition-colors border",
-                            isToday(day) && "ring-2 ring-blue-500",
-                            darkMode
-                              ? "bg-gray-800 border-gray-700 hover:bg-gray-750"
-                              : "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                            isToday(day) && "ring-2 ring-[var(--pill-active)]",
+                            "bg-[var(--tint)] border-[var(--field-bd)] hover:bg-[var(--hover)]"
                           )}
                         >
                           <div className={cn(
                             "text-sm font-medium mb-2",
-                            isToday(day) ? "text-[var(--accent)]" : isDarkMode ? "text-gray-300" : "text-gray-700"
+                            isToday(day) ? "text-[var(--accent)]" : "text-[var(--ink2)]"
                           )}>
                             {format(day, "d")}
                           </div>
@@ -3177,7 +3175,7 @@ export default function HomePage() {
                               <div
                                 key={ev.id}
                                 data-tooltip={`${ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")} - ${ev.title} (${ev.calendar})`}
-                                className="tooltip-task text-xs p-1.5 rounded truncate bg-indigo-500/20 text-indigo-400"
+                                className="tooltip-task text-xs p-1.5 rounded truncate bg-[#7f6a45]/15 text-[var(--accent)]"
                               >
                                 {ev.allDay ? "" : format(new Date(ev.start), "HH:mm") + " "}{ev.title}
                               </div>
@@ -3202,7 +3200,7 @@ export default function HomePage() {
                               </div>
                             ))}
                             {overflow > 0 && (
-                              <div className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                              <div className={cn("text-xs", "text-[var(--muted)]")}>
                                 +{overflow} more
                               </div>
                             )}
@@ -3219,7 +3217,7 @@ export default function HomePage() {
                     {/* Day headers */}
                     <div className="grid grid-cols-7 gap-1 mb-2">
                       {["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"].map((day) => (
-                        <div key={day} className={cn("text-center text-xs font-medium py-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                        <div key={day} className={cn("text-center text-xs font-medium py-2", "text-[var(--muted)]")}>
                           {day}
                         </div>
                       ))}
@@ -3239,16 +3237,16 @@ export default function HomePage() {
                             }}
                             className={cn(
                               "min-h-[80px] p-1.5 rounded-lg cursor-pointer transition-colors border",
-                              isToday(day) && "ring-2 ring-blue-500",
+                              isToday(day) && "ring-2 ring-[var(--pill-active)]",
                               !isCurrentMonth && "opacity-40",
                               darkMode
-                                ? "bg-gray-800 border-gray-700 hover:bg-gray-750"
-                                : "bg-gray-50 border-gray-200 hover:bg-gray-100"
+                                ? "bg-[var(--tint)] border-[var(--field-bd)] hover:bg-[var(--hover)]"
+                                : "bg-[var(--tint)] border-[var(--field-bd)] hover:bg-[var(--hover)]"
                             )}
                           >
                             <div className={cn(
                               "text-xs font-medium mb-1",
-                              isToday(day) ? "text-[var(--accent)]" : isDarkMode ? "text-gray-300" : "text-gray-700"
+                              isToday(day) ? "text-[var(--accent)]" : "text-[var(--ink2)]"
                             )}>
                               {format(day, "d")}
                             </div>
@@ -3257,7 +3255,7 @@ export default function HomePage() {
                                 <div
                                   key={ev.id}
                                   data-tooltip={`${ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")} - ${ev.title} (${ev.calendar})`}
-                                  className="tooltip-task text-xs p-1 rounded truncate bg-indigo-500/20 text-indigo-400"
+                                  className="tooltip-task text-xs p-1 rounded truncate bg-[#7f6a45]/15 text-[var(--accent)]"
                                 >
                                   {ev.title}
                                 </div>
@@ -3288,7 +3286,7 @@ export default function HomePage() {
                                     <div
                                       key={ev.id}
                                       data-tooltip={`${ev.allDay ? "All day" : format(new Date(ev.start), "HH:mm")} - ${ev.title} (${ev.calendar})`}
-                                      className="tooltip-task w-1.5 h-1.5 rounded-full bg-indigo-500"
+                                      className="tooltip-task w-1.5 h-1.5 rounded-full bg-[var(--accent)]"
                                     />
                                   ))}
                                   {dayTasks.slice(2, 5).map((task) => (
@@ -3305,7 +3303,7 @@ export default function HomePage() {
                                     />
                                   ))}
                                   {dayTasks.length > 5 && (
-                                    <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                                    <span className={cn("text-xs", "text-[var(--muted)]")}>
                                       +{dayTasks.length - 5}
                                     </span>
                                   )}
@@ -3321,14 +3319,12 @@ export default function HomePage() {
               </div>
 
               {/* Drawer Footer */}
-              <div className={cn("p-4 border-t flex gap-3", isDarkMode ? "border-gray-800" : "border-gray-200")}>
+              <div className={cn("p-4 border-t flex gap-3", "border-[var(--drawer-bd)]")}>
                 <button
                   onClick={() => setSelectedDate(new Date())}
                   className={cn(
                     "flex-1 px-4 py-2 rounded-lg text-sm font-medium transition-colors",
-                    darkMode
-                      ? "bg-gray-800 hover:bg-gray-700 text-white"
-                      : "bg-gray-100 hover:bg-gray-200 text-gray-900"
+                    "bg-[var(--chip)] hover:brightness-95 text-[var(--ink)]"
                   )}
                 >
                   Go to Today
@@ -3354,7 +3350,7 @@ export default function HomePage() {
             className={cn(
               "fixed left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 z-[101]",
               "w-[calc(100%-2rem)] max-w-md max-h-[85vh] overflow-y-auto rounded-lg p-4 md:p-6",
-              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
+              "bg-[var(--drawer)] text-[var(--ink)]"
             )}
           >
             <div className="flex items-center justify-between mb-4 md:mb-6">
@@ -3394,14 +3390,14 @@ export default function HomePage() {
                         <DropdownMenu.Content
                           className={cn(
                             "min-w-[180px] rounded-lg p-1.5 shadow-lg z-[200]",
-                            isDarkMode ? "bg-gray-800 border border-gray-700" : "bg-white border border-gray-200"
+                            "bg-[var(--drawer)] border border-[var(--drawer-bd)]"
                           )}
                           sideOffset={5}
                         >
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              "hover:bg-[var(--hover)] text-[var(--ink2)]"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -3418,7 +3414,7 @@ export default function HomePage() {
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              "hover:bg-[var(--hover)] text-[var(--ink2)]"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -3435,7 +3431,7 @@ export default function HomePage() {
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              "hover:bg-[var(--hover)] text-[var(--ink2)]"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -3452,7 +3448,7 @@ export default function HomePage() {
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              "hover:bg-[var(--hover)] text-[var(--ink2)]"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -3466,11 +3462,11 @@ export default function HomePage() {
                             <Calendar className="w-4 h-4 text-purple-500" />
                             Yahoo Calendar
                           </DropdownMenu.Item>
-                          <DropdownMenu.Separator className={cn("h-px my-1", isDarkMode ? "bg-gray-700" : "bg-gray-200")} />
+                          <DropdownMenu.Separator className={cn("h-px my-1", "bg-[var(--line3)]")} />
                           <DropdownMenu.Item
                             className={cn(
                               "flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none",
-                              isDarkMode ? "hover:bg-gray-700 text-gray-200" : "hover:bg-gray-100 text-gray-700"
+                              "hover:bg-[var(--hover)] text-[var(--ink2)]"
                             )}
                             onClick={() => {
                               const dateObj = calendarTaskForm.date;
@@ -3481,7 +3477,7 @@ export default function HomePage() {
                               toast.success("Downloading .ics file");
                             }}
                           >
-                            <Download className="w-4 h-4 text-gray-500" />
+                            <Download className="w-4 h-4 text-[var(--muted)]" />
                             Download .ics
                           </DropdownMenu.Item>
                         </DropdownMenu.Content>
@@ -3494,7 +3490,7 @@ export default function HomePage() {
                 <button
                   className={cn(
                     "p-1.5 md:p-2 rounded-lg",
-                    isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
+                    "hover:bg-[var(--hover)]"
                   )}
                 >
                   <X className="w-4 h-4 md:w-5 md:h-5" />
@@ -3505,7 +3501,7 @@ export default function HomePage() {
             <div className="space-y-4">
               {/* Title */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                   Task Title
                 </label>
                 <input
@@ -3516,15 +3512,15 @@ export default function HomePage() {
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                     darkMode
-                      ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500"
-                      : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                   )}
                 />
               </div>
 
               {/* Description */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                   Description
                 </label>
                 <textarea
@@ -3535,8 +3531,8 @@ export default function HomePage() {
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                     darkMode
-                      ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500"
-                      : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                   )}
                 />
               </div>
@@ -3544,7 +3540,7 @@ export default function HomePage() {
               {/* Date and Time Row */}
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                     Date
                   </label>
                   <input
@@ -3562,13 +3558,13 @@ export default function HomePage() {
                     className={cn(
                       "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                       darkMode
-                        ? "bg-gray-800 border-gray-700 text-white"
-                        : "bg-white border-gray-300 text-gray-900"
+                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                     )}
                   />
                 </div>
                 <div>
-                  <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                     Time
                   </label>
                   <input
@@ -3578,8 +3574,8 @@ export default function HomePage() {
                     className={cn(
                       "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                       darkMode
-                        ? "bg-gray-800 border-gray-700 text-white"
-                        : "bg-white border-gray-300 text-gray-900"
+                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                     )}
                   />
                 </div>
@@ -3587,7 +3583,7 @@ export default function HomePage() {
 
               {/* Duration */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                   Duration (minutes)
                 </label>
                 <select
@@ -3595,9 +3591,7 @@ export default function HomePage() {
                   onChange={(e) => setCalendarTaskForm(prev => ({ ...prev, duration: Number(e.target.value) }))}
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                    darkMode
-                      ? "bg-gray-800 border-gray-700 text-white"
-                      : "bg-white border-gray-300 text-gray-900"
+                    "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                   )}
                 >
                   <option value={15}>15 minutes</option>
@@ -3612,7 +3606,7 @@ export default function HomePage() {
 
               {/* Quadrant */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                   Quadrant
                 </label>
                 <select
@@ -3620,9 +3614,7 @@ export default function HomePage() {
                   onChange={(e) => setCalendarTaskForm(prev => ({ ...prev, quadrant: e.target.value as TaskQuadrant }))}
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                    darkMode
-                      ? "bg-gray-800 border-gray-700 text-white"
-                      : "bg-white border-gray-300 text-gray-900"
+                    "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                   )}
                 >
                   <option value="urgent-important">Urgent & Important (Do First)</option>
@@ -3634,7 +3626,7 @@ export default function HomePage() {
 
               {/* Priority */}
               <div>
-                <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                   Priority
                 </label>
                 <select
@@ -3642,9 +3634,7 @@ export default function HomePage() {
                   onChange={(e) => setCalendarTaskForm(prev => ({ ...prev, priority: e.target.value as TaskPriority }))}
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                    darkMode
-                      ? "bg-gray-800 border-gray-700 text-white"
-                      : "bg-white border-gray-300 text-gray-900"
+                    "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                   )}
                 >
                   <option value="high">High Priority</option>
@@ -3656,7 +3646,7 @@ export default function HomePage() {
               {/* Goal */}
               {(goals.length > 0 || calendarTaskForm.goalId) && (
                 <div>
-                  <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  <label className={cn("block text-sm font-medium mb-2", "text-[var(--ink2)]")}>
                     Goal (optional)
                   </label>
                   <select
@@ -3665,8 +3655,8 @@ export default function HomePage() {
                     className={cn(
                       "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                       darkMode
-                        ? "bg-gray-800 border-gray-700 text-white"
-                        : "bg-white border-gray-300 text-gray-900"
+                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                     )}
                   >
                     {renderGoalSelectOptions(calendarTaskForm.goalId)}
@@ -3692,9 +3682,7 @@ export default function HomePage() {
                 <button
                   className={cn(
                     "flex-1 px-4 py-2 rounded-lg font-medium transition-colors",
-                    darkMode
-                      ? "bg-gray-800 hover:bg-gray-700 text-white"
-                      : "bg-gray-100 hover:bg-gray-200 text-gray-900"
+                    "bg-[var(--chip)] hover:brightness-95 text-[var(--ink)]"
                   )}
                 >
                   Cancel
