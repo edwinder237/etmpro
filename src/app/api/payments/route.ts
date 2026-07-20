@@ -1,39 +1,10 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { auth } from "@clerk/nextjs/server";
 import { env } from "~/env";
-
-// Shape of the external finance API response (only the fields we consume)
-interface FinanceApiItem {
-  itemType?: string;
-  label?: string;
-  amount?: number;
-}
-
-interface FinanceApiBreakdownItem {
-  label?: string;
-  amount?: number;
-}
-
-interface FinanceApiAccount {
-  id?: string;
-  shortName?: string;
-  total?: number;
-  items?: FinanceApiBreakdownItem[];
-}
-
-interface FinanceApiResponse {
-  periods?: Array<{ items?: FinanceApiItem[] }>;
-  totals?: {
-    totalIncome?: number;
-    totalExpenses?: number;
-    totalDebtPayments?: number;
-    finalBalance?: number;
-    accountBreakdown?: FinanceApiAccount[];
-  };
-}
+import { buildPaymentsPayload, type FinanceApiResponse } from "~/lib/payments";
 
 // GET /api/payments?date=YYYY-MM-DD — proxies the external finance API and
-// returns the day's payments grouped by account, plus unassigned budget items.
+// returns the day's payments grouped by account, plus unassigned items.
 export async function GET(request: NextRequest) {
   try {
     const { userId } = await auth();
@@ -71,33 +42,8 @@ export async function GET(request: NextRequest) {
     }
 
     const data = (await res.json()) as FinanceApiResponse;
-    const totals = data.totals;
 
-    const accounts = (totals?.accountBreakdown ?? [])
-      .filter(a => a.id && a.shortName)
-      .map(a => ({
-        id: a.id!,
-        shortName: a.shortName!,
-        total: a.total ?? 0,
-        items: (a.items ?? [])
-          .filter(i => i.label !== undefined && i.amount !== undefined)
-          .map(i => ({ label: i.label!, amount: i.amount! })),
-      }));
-
-    // Budget items carry no account, so they never appear in accountBreakdown
-    const budgets = (data.periods ?? [])
-      .flatMap(p => p.items ?? [])
-      .filter(i => i.itemType === "BUDGET" && i.label !== undefined && i.amount !== undefined)
-      .map(i => ({ label: i.label!, amount: i.amount! }));
-
-    return NextResponse.json({
-      configured: true,
-      date,
-      totalIncome: totals?.totalIncome ?? 0,
-      finalBalance: totals?.finalBalance ?? 0,
-      accounts,
-      budgets,
-    });
+    return NextResponse.json(buildPaymentsPayload(data, date));
   } catch {
     return NextResponse.json({ error: "Failed to fetch payments" }, { status: 500 });
   }
