@@ -7,57 +7,26 @@ import {
   Moon,
   Settings,
   Plus,
-  MoreVertical,
   Trash2,
   Calendar,
   CheckCircle2,
   AlertCircle,
   X,
-  Eye,
-  EyeOff,
-  Info,
   CalendarDays,
   CalendarRange,
   Clock,
   ChevronLeft,
   ChevronRight,
   ArrowRight,
-  Check,
   Share2,
   Download,
   Repeat,
   Edit3,
-  ChevronDown,
-  ChevronUp,
-  Circle,
   Cloud,
-  CloudRain,
-  CloudSnow,
-  CloudDrizzle,
-  CloudFog,
-  CloudLightning,
   MapPin,
   Loader2,
-  GripVertical,
-  Target,
   Copy
 } from "lucide-react";
-import {
-  DndContext,
-  closestCenter,
-  PointerSensor,
-  TouchSensor,
-  useSensor,
-  useSensors,
-  type DragEndEvent,
-} from "@dnd-kit/core";
-import {
-  SortableContext,
-  verticalListSortingStrategy,
-  useSortable,
-  arrayMove,
-} from "@dnd-kit/sortable";
-import { CSS } from "@dnd-kit/utilities";
 import {
   startOfWeek,
   endOfWeek,
@@ -78,14 +47,11 @@ import {
 } from "date-fns";
 import { format } from "date-fns";
 import { cn } from "~/lib/utils";
-import { addToCalendar, type CalendarProvider } from "~/lib/calendar-export";
+import { addToCalendar } from "~/lib/calendar-export";
 import toast, { Toaster } from "react-hot-toast";
 import { UserButton, useUser } from "@clerk/nextjs";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
-import { TaskIcon } from "~/components/icons/TaskIcon";
-import { EisenqLogo } from "~/components/icons/EisenqLogo";
-import { StatCardSkeleton, QuadrantSkeleton, TaskCardSkeleton } from "~/components/skeletons/TaskSkeleton";
 import { useAudioFeedback } from "~/hooks/useAudioFeedback";
 
 type TaskQuadrant = "urgent-important" | "important-not-urgent" | "urgent-not-important" | "not-urgent-not-important";
@@ -177,37 +143,6 @@ const INTERVAL_PRESETS = [
 
 const DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
 
-const quadrantConfig = {
-  "urgent-important": {
-    title: "Do First",
-    subtitle: "Urgent & Important",
-    color: "bg-red-600",
-    borderColor: "border-red-600",
-    bgColor: "bg-red-600/10"
-  },
-  "important-not-urgent": {
-    title: "Schedule",
-    subtitle: "Important & Not Urgent",
-    color: "bg-yellow-600",
-    borderColor: "border-yellow-600",
-    bgColor: "bg-yellow-600/10"
-  },
-  "urgent-not-important": {
-    title: "Delegate",
-    subtitle: "Urgent & Not Important",
-    color: "bg-blue-600",
-    borderColor: "border-blue-600",
-    bgColor: "bg-blue-600/10"
-  },
-  "not-urgent-not-important": {
-    title: "Eliminate",
-    subtitle: "Not Urgent & Not Important",
-    color: "bg-green-600",
-    borderColor: "border-green-600",
-    bgColor: "bg-green-600/10"
-  }
-};
-
 const WEATHER_CODE_MAP: Record<number, { label: string; icon: string }> = {
   0: { label: "Clear sky", icon: "sun" },
   1: { label: "Mostly clear", icon: "sun" },
@@ -235,54 +170,6 @@ const WEATHER_CODE_MAP: Record<number, { label: string; icon: string }> = {
   99: { label: "Thunderstorm + heavy hail", icon: "lightning" },
 };
 
-function WeatherIcon({ icon, className }: { icon: string; className?: string }) {
-  switch (icon) {
-    case "sun": return <Sun className={className} />;
-    case "cloud": return <Cloud className={className} />;
-    case "rain": return <CloudRain className={className} />;
-    case "snow": return <CloudSnow className={className} />;
-    case "drizzle": return <CloudDrizzle className={className} />;
-    case "fog": return <CloudFog className={className} />;
-    case "lightning": return <CloudLightning className={className} />;
-    default: return <Cloud className={className} />;
-  }
-}
-
-function getClothingSuggestion(feelsLike: number, weatherCode: number): string[] {
-  const tips: string[] = [];
-
-  // Temperature-based
-  if (feelsLike <= -15) {
-    tips.push("Heavy winter coat, insulated boots, gloves & scarf");
-  } else if (feelsLike <= -5) {
-    tips.push("Winter coat, warm layers, hat & gloves");
-  } else if (feelsLike <= 5) {
-    tips.push("Warm jacket, long sleeves, consider layers");
-  } else if (feelsLike <= 12) {
-    tips.push("Light jacket or sweater");
-  } else if (feelsLike <= 18) {
-    tips.push("Long sleeves or light layer");
-  } else if (feelsLike <= 25) {
-    tips.push("T-shirt and comfortable pants");
-  } else if (feelsLike <= 30) {
-    tips.push("Light and breathable clothing");
-  } else {
-    tips.push("Minimal light clothing, stay cool");
-  }
-
-  // Weather condition-based
-  const icon = WEATHER_CODE_MAP[weatherCode]?.icon;
-  if (icon === "rain" || icon === "drizzle") {
-    tips.push("Bring an umbrella & waterproof layer");
-  } else if (icon === "snow") {
-    tips.push("Waterproof boots & warm layers");
-  } else if (icon === "sun" && feelsLike > 20) {
-    tips.push("Sunglasses & sunscreen recommended");
-  }
-
-  return tips;
-}
-
 function safeGetItem(key: string): string | null {
   try { return localStorage.getItem(key); } catch { return null; }
 }
@@ -293,115 +180,17 @@ function safeRemoveItem(key: string): void {
   try { localStorage.removeItem(key); } catch { /* ignore */ }
 }
 
-function SortableChecklistItem({
-  item,
-  isCompleted,
-  isDarkMode,
-  onToggle,
-  onEdit,
-  onDelete,
-}: {
-  item: ChecklistItem;
-  isCompleted: boolean;
-  isDarkMode: boolean;
-  onToggle: (id: string) => void;
-  onEdit: (item: ChecklistItem) => void;
-  onDelete: (id: string) => void;
-}) {
-  const {
-    attributes,
-    listeners,
-    setNodeRef,
-    transform,
-    transition,
-    isDragging,
-  } = useSortable({ id: item._id });
-
-  const style = {
-    transform: CSS.Transform.toString(transform),
-    transition,
-    opacity: isDragging ? 0.5 : 1,
-    zIndex: isDragging ? 10 : undefined,
-    position: "relative" as const,
-  };
-
-  return (
-    <div
-      ref={setNodeRef}
-      style={style}
-      className={cn(
-        "group flex items-center gap-2 py-2 px-2 rounded-lg transition-colors",
-        isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
-      )}
-    >
-      <button
-        {...attributes}
-        {...listeners}
-        className={cn(
-          "flex-shrink-0 touch-none cursor-grab active:cursor-grabbing p-0.5 rounded",
-          isDarkMode ? "text-gray-600 hover:text-gray-400" : "text-gray-300 hover:text-gray-500"
-        )}
-        aria-label="Drag to reorder"
-      >
-        <GripVertical className="w-4 h-4" />
-      </button>
-      <button
-        onClick={() => onToggle(item._id)}
-        className="flex-shrink-0"
-      >
-        {isCompleted ? (
-          <CheckCircle2 className="w-5 h-5 text-purple-500" />
-        ) : (
-          <Circle className={cn("w-5 h-5", isDarkMode ? "text-gray-600" : "text-gray-300")} />
-        )}
-      </button>
-      <span
-        className={cn(
-          "flex-1 text-sm transition-all",
-          isCompleted && "line-through",
-          isCompleted
-            ? isDarkMode ? "text-gray-600" : "text-gray-400"
-            : isDarkMode ? "text-gray-200" : "text-gray-700"
-        )}
-      >
-        {item.title}
-      </span>
-      <span className={cn(
-        "text-xs px-1.5 py-0.5 rounded",
-        isDarkMode ? "bg-gray-800 text-gray-500" : "bg-gray-100 text-gray-400"
-      )}>
-        {item.frequency === "daily"
-          ? "daily"
-          : item.daysOfWeek?.map(d => DAY_LABELS[d]).join(", ")}
-      </span>
-      <div className="flex items-center gap-0.5">
-        <button
-          onClick={() => onEdit(item)}
-          className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
-        >
-          <Edit3 className="w-3.5 h-3.5" />
-        </button>
-        <button
-          onClick={() => onDelete(item._id)}
-          className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
-        >
-          <Trash2 className="w-3.5 h-3.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
-
 export default function HomePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
+  const [searchOpen, setSearchOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [darkMode, setDarkMode] = useState<boolean | null>(null);
   // Use dark mode as default during SSR/initial render to prevent flash
   const isDarkMode = darkMode ?? true;
   const { user } = useUser();
-  const { playCompletionSound, playUncompleteSound, vibrateOnDelete } = useAudioFeedback();
+  const { playCompletionSound, playUncompleteSound } = useAudioFeedback();
   const [isInfoModalOpen, setIsInfoModalOpen] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [taskOperationLoading, setTaskOperationLoading] = useState<Record<string, boolean>>({});
@@ -411,7 +200,7 @@ export default function HomePage() {
     "urgent-not-important": false,
     "not-urgent-not-important": false,
   });
-  const [hideCompleted, setHideCompleted] = useState<Record<TaskQuadrant, boolean>>({
+  const [hideCompleted] = useState<Record<TaskQuadrant, boolean>>({
     "urgent-important": true,
     "important-not-urgent": true,
     "urgent-not-important": true,
@@ -461,10 +250,6 @@ export default function HomePage() {
   });
 
   // Stats drawer state
-  type StatType = "total" | "completed" | "highPriority" | "thisWeek" | null;
-  const [statsDrawerType, setStatsDrawerType] = useState<StatType>(null);
-  const [selectedTaskIds, setSelectedTaskIds] = useState<Set<string>>(new Set());
-  const [isDeleting, setIsDeleting] = useState(false);
 
   // Settings state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -494,19 +279,14 @@ export default function HomePage() {
   } | null>(null);
   const [weatherLoading, setWeatherLoading] = useState(false);
   const [weatherError, setWeatherError] = useState("");
-  const [isEditingLocation, setIsEditingLocation] = useState(false);
   const [locationInput, setLocationInput] = useState("");
-  const locationInputRef = useRef<HTMLInputElement>(null);
   const [clothingSuggestion, setClothingSuggestion] = useState("");
   const [clothingLoading, setClothingLoading] = useState(false);
-  const [plannedActivity, setPlannedActivity] = useState("");
 
   // Checklist state
   const [checklistItems, setChecklistItems] = useState<ChecklistItem[]>([]);
   const [checklistLoading, setChecklistLoading] = useState(false);
-  const [isChecklistCollapsed, setIsChecklistCollapsed] = useState(false);
   const [showChecklistForm, setShowChecklistForm] = useState(false);
-  const [showAllChecklistItems, setShowAllChecklistItems] = useState(false);
   const [checklistTab, setChecklistTab] = useState<"today" | "all" | "maintenance">("today");
   const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>([]);
   const [showMaintenanceForm, setShowMaintenanceForm] = useState(false);
@@ -721,44 +501,7 @@ export default function HomePage() {
   };
 
   // Quick-sync a scheduled task to an external calendar, straight from its card.
-  const exportTaskToCalendar = (task: Task, provider: CalendarProvider) => {
-    if (!task.dueDate) return;
-    const startDate = new Date(task.dueDate);
-    const endDate = new Date(startDate.getTime() + (task.duration ?? 30) * 60 * 1000);
-    addToCalendar({ title: task.title, description: task.description, startDate, endDate }, provider);
-    const messages: Record<CalendarProvider, string> = {
-      google: "Opening Google Calendar",
-      outlook: "Opening Outlook Calendar",
-      office365: "Opening Office 365 Calendar",
-      yahoo: "Opening Yahoo Calendar",
-      ics: "Downloading .ics file",
-    };
-    toast.success(messages[provider]);
-  };
-
   // Reschedule an overdue task to tomorrow, keeping its original time of day.
-  const rescheduleTaskToTomorrow = async (task: Task) => {
-    const base = task.dueDate ? new Date(task.dueDate) : new Date();
-    const tomorrow = addDays(new Date(), 1);
-    tomorrow.setHours(base.getHours(), base.getMinutes(), 0, 0);
-    try {
-      const response = await fetch("/api/tasks", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ _id: task._id, dueDate: tomorrow.toISOString() }),
-      });
-      if (response.ok) {
-        const updatedTask = await response.json() as Task;
-        setTasks(prev => prev.map(t => t._id === updatedTask._id ? updatedTask : t));
-        toast.success("Rescheduled to tomorrow");
-      } else {
-        toast.error("Failed to reschedule");
-      }
-    } catch {
-      toast.error("Error rescheduling task");
-    }
-  };
-
   // Helper functions for calendar
   const getTasksForDate = (date: Date) => {
     return tasks.filter(task => {
@@ -851,13 +594,6 @@ export default function HomePage() {
     }
   }, []);
 
-  // Initialize checklist collapsed state from localStorage
-  useEffect(() => {
-    const stored = localStorage.getItem("eisenq-checklist-collapsed");
-    if (stored !== null) {
-      setIsChecklistCollapsed(stored === "true");
-    }
-  }, []);
 
   // Initialize weather location, Gemini API key, and iCal URLs.
   // localStorage is a fast cache; the encrypted DB (via /api/settings) is the source of truth.
@@ -902,7 +638,7 @@ export default function HomePage() {
 
   // Lock body scroll when any modal/drawer is open
   useEffect(() => {
-    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || statsDrawerType !== null;
+    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || routineDrawerOpen || isGoalsExpanded || paymentsDrawerOpen;
 
     if (isAnyModalOpen) {
       document.body.style.overflow = 'hidden';
@@ -913,7 +649,7 @@ export default function HomePage() {
     return () => {
       document.body.style.overflow = '';
     };
-  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, statsDrawerType]);
+  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, routineDrawerOpen, isGoalsExpanded, paymentsDrawerOpen]);
 
   const fetchTasks = async () => {
     try {
@@ -1056,22 +792,13 @@ export default function HomePage() {
     }
   }, [weatherData, weatherLocation]);
 
-  const handleLocationSubmit = () => {
-    const trimmed = locationInput.trim();
-    if (!trimmed) {
-      setIsEditingLocation(false);
-      return;
-    }
-    setWeatherLocation(trimmed);
-    safeSetItem("eisenq-weather-location", trimmed);
-    setIsEditingLocation(false);
-  };
-
-  const startEditingLocation = () => {
-    setLocationInput(weatherLocation);
-    setIsEditingLocation(true);
-    setTimeout(() => locationInputRef.current?.focus(), 0);
-  };
+  // Fetch the AI what-to-wear line for the masthead once weather + a Gemini key are available
+  useEffect(() => {
+    if (!weatherData || !geminiApiKey) return;
+    const controller = new AbortController();
+    void fetchClothingSuggestion(undefined, controller.signal);
+    return () => controller.abort();
+  }, [weatherData, geminiApiKey, fetchClothingSuggestion]);
 
   // Calendar feed functions
   const fetchCalendarEvents = useCallback(async (urls: string[], signal?: AbortSignal) => {
@@ -1191,7 +918,6 @@ export default function HomePage() {
   const todaysScheduledTasks = tasks
     .filter(t => t.dueDate && isSameDay(new Date(t.dueDate), new Date()))
     .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
-  const hasSidePanel = icalUrls.length > 0 || todaysScheduledTasks.length > 0;
 
   const handleToggleChecklistItem = async (id: string) => {
     // Optimistic update
@@ -1313,12 +1039,6 @@ export default function HomePage() {
     setShowChecklistForm(true);
   };
 
-  const toggleChecklistCollapsed = () => {
-    const newValue = !isChecklistCollapsed;
-    setIsChecklistCollapsed(newValue);
-    localStorage.setItem("eisenq-checklist-collapsed", String(newValue));
-  };
-
   // Maintenance item functions
   const fetchMaintenanceItems = async () => {
     try {
@@ -1403,7 +1123,6 @@ export default function HomePage() {
   const goalsPanelKey = goalsPanelPeriodType === "week" ? weekKeyOf(goalsPanelDate) : monthKeyOf(goalsPanelDate);
   const goalsPanelCurrentKey = goalsPanelPeriodType === "week" ? currentWeekKey : currentMonthKey;
   const isViewingPastPeriod = goalsPanelKey < goalsPanelCurrentKey;
-  const isViewingCurrentPeriod = goalsPanelKey === goalsPanelCurrentKey;
 
   const currentWeekGoals = goals.filter(g => g.periodType === "week" && g.periodKey === currentWeekKey);
   const currentMonthGoals = goals.filter(g => g.periodType === "month" && g.periodKey === currentMonthKey);
@@ -1610,55 +1329,7 @@ export default function HomePage() {
     });
   };
 
-  const openGoalsPanelWithForm = (periodType: GoalPeriodType) => {
-    setGoalsPanelPeriodType(periodType);
-    setGoalsPanelDate(new Date());
-    setIsGoalsExpanded(true);
-    resetGoalForm();
-    setShowGoalForm(true);
-  };
-
   // Compact goal row used in the "This Week / This Month" strip
-  const renderGoalStripRow = (goal: Goal) => {
-    const counts = goalTaskCounts.get(goal._id);
-    return (
-      <div key={goal._id} className="flex items-start gap-2 py-1">
-        <button
-          onClick={() => handleToggleGoalAchieved(goal)}
-          className={cn(
-            "mt-0.5 rounded-full transition-colors",
-            goal.status === "achieved"
-              ? "text-emerald-500"
-              : isDarkMode ? "text-gray-400 hover:text-gray-300" : "text-gray-500 hover:text-gray-600"
-          )}
-        >
-          {goal.status === "achieved" ? (
-            <CheckCircle2 className="w-4 h-4" />
-          ) : (
-            <div className="w-4 h-4 rounded-full border-2 border-current" />
-          )}
-        </button>
-        <span className={cn(
-          "flex-1 text-sm",
-          goal.status === "achieved" && "line-through opacity-60"
-        )}>
-          {goal.title}
-        </span>
-        {counts && (
-          <span className={cn(
-            "text-xs flex items-center gap-1 mt-0.5",
-            counts.done === counts.total
-              ? "text-emerald-500"
-              : isDarkMode ? "text-gray-500" : "text-gray-400"
-          )}>
-            <CheckCircle2 className="w-3 h-3" />
-            {counts.done}/{counts.total}
-          </span>
-        )}
-      </div>
-    );
-  };
-
   // Label for a goal option in the task-form selects, with period context for stale goals
   const goalOptionLabel = (goal: Goal) => {
     if (goal.periodType === "week" && goal.periodKey === currentWeekKey) return goal.title;
@@ -1751,53 +1422,6 @@ export default function HomePage() {
       }
       return next;
     });
-  };
-
-  const formatPaymentAmount = (amount: number) =>
-    `$${Math.abs(amount).toLocaleString("en-US", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
-
-  // Drag-to-reorder sensors and handler
-  const pointerSensor = useSensor(PointerSensor, { activationConstraint: { distance: 8 } });
-  const touchSensor = useSensor(TouchSensor, { activationConstraint: { delay: 200, tolerance: 5 } });
-  const checklistSensors = useSensors(pointerSensor, touchSensor);
-
-  const handleChecklistDragEnd = (event: DragEndEvent) => {
-    const { active, over } = event;
-    if (!over || active.id === over.id) return;
-
-    const oldIndex = todaysChecklistItems.findIndex(i => i._id === active.id);
-    const newIndex = todaysChecklistItems.findIndex(i => i._id === over.id);
-    if (oldIndex === -1 || newIndex === -1) return;
-
-    const reorderedVisible = arrayMove(todaysChecklistItems, oldIndex, newIndex);
-
-    // Map reordered visible items back into the full array, preserving invisible items in place
-    let vIdx = 0;
-    const reorderedFull = checklistItems.map(item =>
-      isChecklistItemVisibleToday(item) ? reorderedVisible[vIdx++]! : item
-    );
-    const withNewOrder = reorderedFull.map((item, idx) => ({ ...item, sortOrder: idx }));
-
-    // Optimistic update
-    setChecklistItems(withNewOrder);
-
-    // Persist only changed items
-    const changed = withNewOrder
-      .filter(item => {
-        const orig = checklistItems.find(i => i._id === item._id);
-        return orig && orig.sortOrder !== item.sortOrder;
-      })
-      .map(({ _id, sortOrder }) => ({ _id, sortOrder }));
-
-    if (changed.length > 0) {
-      fetch("/api/checklist/reorder", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ items: changed }),
-      }).catch(() => {
-        void fetchChecklistItems(); // revert on failure
-      });
-    }
   };
 
   const handleAddTask = async () => {
@@ -1958,33 +1582,6 @@ export default function HomePage() {
         [editingTask.quadrant]: false,
         [formData.quadrant]: false 
       }));
-    }
-  };
-
-  const handleDeleteTask = async (id: string) => {
-    const taskToDelete = tasks.find(t => t._id === id);
-    if (!taskToDelete) return;
-    
-    try {
-      setTaskOperationLoading(prev => ({ ...prev, [`delete-${id}`]: true }));
-      setQuadrantLoading(prev => ({ ...prev, [taskToDelete.quadrant]: true }));
-      
-      const response = await fetch(`/api/tasks?id=${id}`, {
-        method: "DELETE"
-      });
-      
-      if (response.ok) {
-        setTasks(prev => prev.filter(task => task._id !== id));
-        vibrateOnDelete();
-        toast.success("Task deleted successfully!");
-      } else {
-        toast.error("Failed to delete task");
-      }
-    } catch {
-      toast.error("Error deleting task");
-    } finally {
-      setTaskOperationLoading(prev => ({ ...prev, [`delete-${id}`]: false }));
-      setQuadrantLoading(prev => ({ ...prev, [taskToDelete.quadrant]: false }));
     }
   };
 
@@ -2239,45 +1836,6 @@ export default function HomePage() {
     }
   };
 
-  const handleMoveTask = async (task: Task, newQuadrant: TaskQuadrant) => {
-    try {
-      // Set loading for both old and new quadrants
-      setQuadrantLoading(prev => ({ 
-        ...prev, 
-        [task.quadrant]: true,
-        [newQuadrant]: true 
-      }));
-      
-      const response = await fetch("/api/tasks", {
-        method: "PUT",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          _id: task._id,
-          quadrant: newQuadrant
-        })
-      });
-      
-      if (response.ok) {
-        const updatedTask = await response.json() as Task;
-        setTasks(prev => prev.map(t => 
-          t._id === task._id ? updatedTask : t
-        ));
-        const quadrantName = quadrantConfig[newQuadrant].title;
-        toast.success(`Task moved to ${quadrantName}`);
-      } else {
-        toast.error("Failed to move task");
-      }
-    } catch {
-      toast.error("Error moving task");
-    } finally {
-      setQuadrantLoading(prev => ({
-        ...prev,
-        [task.quadrant]: false,
-        [newQuadrant]: false
-      }));
-    }
-  };
-
   const resetFormState = () => {
     setFormData({
       title: "",
@@ -2349,13 +1907,6 @@ export default function HomePage() {
     }
   };
 
-  const toggleCompletedVisibility = (quadrant: TaskQuadrant) => {
-    setHideCompleted(prev => ({
-      ...prev,
-      [quadrant]: !prev[quadrant]
-    }));
-  };
-
   const filteredTasks = tasks.filter(task => 
     task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
     task.description?.toLowerCase().includes(searchQuery.toLowerCase())
@@ -2369,106 +1920,6 @@ export default function HomePage() {
     }
     
     return quadrantTasks;
-  };
-
-  // Helper to get filtered tasks for stats drawer
-  const getTasksForStat = (statType: StatType): Task[] => {
-    if (!statType) return [];
-
-    switch (statType) {
-      case "total":
-        return tasks;
-      case "completed":
-        return tasks.filter(t => t.status === "completed");
-      case "highPriority":
-        return tasks.filter(t => (t.priority === "high" || t.quadrant === "urgent-important") && t.status !== "completed");
-      case "thisWeek":
-        return tasks.filter(t => {
-          if (!t.dueDate) return false;
-          const dueDate = new Date(t.dueDate);
-          const today = new Date();
-          today.setHours(0, 0, 0, 0);
-          const dueDateStart = new Date(dueDate);
-          dueDateStart.setHours(0, 0, 0, 0);
-          const weekFromNow = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-          return dueDateStart >= today && dueDateStart <= weekFromNow;
-        });
-      default:
-        return [];
-    }
-  };
-
-  const statsDrawerConfig: Record<Exclude<StatType, null>, { title: string; icon: React.ReactNode; color: string }> = {
-    total: { title: "All Tasks", icon: <TaskIcon className="w-5 h-5" />, color: "text-[var(--accent)]" },
-    completed: { title: "Completed Tasks", icon: <CheckCircle2 className="w-5 h-5" />, color: "text-green-500" },
-    highPriority: { title: "High Priority Tasks", icon: <AlertCircle className="w-5 h-5" />, color: "text-red-500" },
-    thisWeek: { title: "Due This Week", icon: <Calendar className="w-5 h-5" />, color: "text-[var(--accent)]" },
-  };
-
-  // Multi-select helpers for stats drawer
-  const toggleTaskSelection = (taskId: string) => {
-    setSelectedTaskIds(prev => {
-      const newSet = new Set(prev);
-      if (newSet.has(taskId)) {
-        newSet.delete(taskId);
-      } else {
-        newSet.add(taskId);
-      }
-      return newSet;
-    });
-  };
-
-  const selectAllTasks = (taskList: Task[]) => {
-    setSelectedTaskIds(new Set(taskList.map(t => t._id)));
-  };
-
-  const clearSelection = () => {
-    setSelectedTaskIds(new Set());
-  };
-
-  const handleBulkDelete = async () => {
-    if (selectedTaskIds.size === 0) return;
-
-    setIsDeleting(true);
-    try {
-      const deletePromises = Array.from(selectedTaskIds).map(id =>
-        fetch(`/api/tasks?id=${id}`, { method: "DELETE" })
-      );
-
-      const results = await Promise.all(deletePromises);
-      const successCount = results.filter(r => r.ok).length;
-
-      if (successCount > 0) {
-        setTasks(prev => prev.filter(task => !selectedTaskIds.has(task._id)));
-        toast.success(`${successCount} task${successCount !== 1 ? "s" : ""} deleted`);
-        clearSelection();
-      }
-
-      if (successCount < selectedTaskIds.size) {
-        toast.error(`Failed to delete ${selectedTaskIds.size - successCount} task(s)`);
-      }
-    } catch {
-      toast.error("Error deleting tasks");
-    } finally {
-      setIsDeleting(false);
-    }
-  };
-
-  const stats = {
-    total: tasks.length,
-    completed: tasks.filter(t => t.status === "completed").length,
-    highPriority: tasks.filter(t => (t.priority === "high" || t.quadrant === "urgent-important") && t.status !== "completed").length,
-    thisWeek: tasks.filter(t => {
-      if (!t.dueDate) return false;
-      const dueDate = new Date(t.dueDate);
-      const today = new Date();
-      // Reset to start of day for accurate comparison
-      today.setHours(0, 0, 0, 0);
-      const dueDateStart = new Date(dueDate);
-      dueDateStart.setHours(0, 0, 0, 0);
-      const weekFromNow = new Date(today.getTime() + 7 * 24 * 60 * 60 * 1000);
-      return dueDateStart >= today && dueDateStart <= weekFromNow;
-    }).length
   };
 
   // ===== "Calm Editorial" redesign: theming + derived view models =====
@@ -2588,18 +2039,26 @@ export default function HomePage() {
             <span className="text-[12px] tracking-[0.14em] uppercase" style={{ color: "var(--muted)" }}>Decide &amp; Do</span>
           </div>
           <div className="flex items-center gap-3 flex-1 md:flex-none justify-end">
-            <div className="searchbar flex items-center gap-2 flex-1 md:flex-none md:w-[280px] px-4 py-[9px] rounded-[11px]"
-              style={{ background: "var(--drawer)", border: "1px solid var(--field-bd)" }}>
+            <button
+              onClick={() => setSearchOpen(true)}
+              className="searchbar flex items-center gap-2 flex-1 md:flex-none md:w-[280px] px-4 py-[9px] rounded-[11px] text-left cursor-text"
+              style={{ background: "var(--drawer)", border: "1px solid var(--field-bd)" }}
+            >
               <Search className="w-4 h-4" style={{ color: "var(--muted)" }} />
-              <input
-                type="text"
-                placeholder="Search tasks…"
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-                className="bg-transparent outline-none text-[13px] w-full"
-                style={{ color: "var(--ink)" }}
-              />
-            </div>
+              <span className="text-[13px] flex-1 truncate" style={{ color: searchQuery ? "var(--ink)" : "var(--muted)" }}>
+                {searchQuery || "Search tasks…"}
+              </span>
+              {searchQuery && (
+                <span
+                  role="button"
+                  onClick={(e) => { e.stopPropagation(); setSearchQuery(""); }}
+                  className="text-[11px] px-1.5 py-0.5 rounded"
+                  style={{ background: "var(--chip)", color: "var(--muted)" }}
+                >
+                  clear
+                </span>
+              )}
+            </button>
             <div className="flex gap-1">
               <button className="navbtn" onClick={() => setIsCalendarDrawerOpen(true)} title="Today's calendar">
                 <CalendarDays className="w-[17px] h-[17px]" />
@@ -2691,207 +2150,6 @@ export default function HomePage() {
           </div>
         </div>
       </div>
-
-      {/* Stats Drawer */}
-      <Dialog.Root open={statsDrawerType !== null} onOpenChange={(open) => {
-        if (!open) {
-          setStatsDrawerType(null);
-          clearSelection();
-        }
-      }}>
-        <Dialog.Portal>
-          <Dialog.Overlay className="fixed inset-0 bg-black/50 z-40 data-[state=open]:animate-in data-[state=closed]:animate-out data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0" />
-          <Dialog.Content
-            className={cn(
-              "fixed right-0 top-0 h-full w-full max-w-lg z-50 shadow-xl",
-              "data-[state=open]:animate-in data-[state=closed]:animate-out",
-              "data-[state=closed]:slide-out-to-right data-[state=open]:slide-in-from-right",
-              "duration-300 ease-in-out",
-              isDarkMode ? "bg-gray-900 text-white" : "bg-white text-gray-900"
-            )}
-          >
-            {statsDrawerType && (
-              <div className="flex flex-col h-full">
-                {/* Drawer Header */}
-                <div className={cn("flex items-center justify-between p-4 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                  <div className="flex items-center gap-3">
-                    <div className={cn("p-2 rounded-lg", statsDrawerConfig[statsDrawerType].color.replace("text-", "bg-").replace("500", "600/20"))}>
-                      <span className={statsDrawerConfig[statsDrawerType].color}>
-                        {statsDrawerConfig[statsDrawerType].icon}
-                      </span>
-                    </div>
-                    <div>
-                      <Dialog.Title className="text-lg font-semibold">{statsDrawerConfig[statsDrawerType].title}</Dialog.Title>
-                      <Dialog.Description className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
-                        {selectedTaskIds.size > 0
-                          ? `${selectedTaskIds.size} selected`
-                          : `${getTasksForStat(statsDrawerType).length} task${getTasksForStat(statsDrawerType).length !== 1 ? "s" : ""}`
-                        }
-                      </Dialog.Description>
-                    </div>
-                  </div>
-                  <Dialog.Close asChild>
-                    <button
-                      className={cn(
-                        "p-2 rounded-lg transition-colors",
-                        isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-600"
-                      )}
-                    >
-                      <X className="w-5 h-5" />
-                    </button>
-                  </Dialog.Close>
-                </div>
-
-                {/* Selection Actions Bar */}
-                {getTasksForStat(statsDrawerType).length > 0 && (
-                  <div className={cn("flex items-center justify-between px-4 py-2 border-b", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                    <div className="flex items-center gap-2">
-                      <button
-                        onClick={() => {
-                          const currentTasks = getTasksForStat(statsDrawerType);
-                          if (selectedTaskIds.size === currentTasks.length) {
-                            clearSelection();
-                          } else {
-                            selectAllTasks(currentTasks);
-                          }
-                        }}
-                        className={cn(
-                          "text-sm px-3 py-1.5 rounded-lg transition-colors",
-                          isDarkMode ? "hover:bg-gray-800 text-gray-300" : "hover:bg-gray-100 text-gray-700"
-                        )}
-                      >
-                        {selectedTaskIds.size === getTasksForStat(statsDrawerType).length ? "Deselect All" : "Select All"}
-                      </button>
-                      {selectedTaskIds.size > 0 && (
-                        <button
-                          onClick={clearSelection}
-                          className={cn(
-                            "text-sm px-3 py-1.5 rounded-lg transition-colors",
-                            isDarkMode ? "hover:bg-gray-800 text-gray-400" : "hover:bg-gray-100 text-gray-500"
-                          )}
-                        >
-                          Clear
-                        </button>
-                      )}
-                    </div>
-                    {selectedTaskIds.size > 0 && (
-                      <button
-                        onClick={handleBulkDelete}
-                        disabled={isDeleting}
-                        className={cn(
-                          "flex items-center gap-1.5 text-sm px-3 py-1.5 rounded-lg transition-colors",
-                          "bg-red-500/20 text-red-400 hover:bg-red-500/30",
-                          isDeleting && "opacity-50 cursor-not-allowed"
-                        )}
-                      >
-                        <Trash2 className="w-4 h-4" />
-                        Delete ({selectedTaskIds.size})
-                      </button>
-                    )}
-                  </div>
-                )}
-
-                {/* Task List */}
-                <div className="flex-1 overflow-y-auto p-4">
-                  {getTasksForStat(statsDrawerType).length === 0 ? (
-                    <div className={cn("text-center py-12", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                      <p>No tasks found</p>
-                    </div>
-                  ) : (
-                    <div className="space-y-3">
-                      {getTasksForStat(statsDrawerType).map((task) => (
-                        <div
-                          key={task._id}
-                          className={cn(
-                            "p-4 rounded-lg border-l-4 transition-colors",
-                            task.quadrant === "urgent-important" && "border-l-red-500",
-                            task.quadrant === "important-not-urgent" && "border-l-yellow-500",
-                            task.quadrant === "urgent-not-important" && "border-l-blue-500",
-                            task.quadrant === "not-urgent-not-important" && "border-l-green-500",
-                            selectedTaskIds.has(task._id)
-                              ? isDarkMode ? "bg-blue-900/30 ring-1 ring-blue-500/50" : "bg-blue-50 ring-1 ring-blue-300"
-                              : isDarkMode ? "bg-gray-800 hover:bg-gray-750" : "bg-gray-50 hover:bg-gray-100"
-                          )}
-                        >
-                          <div className="flex items-start gap-3">
-                            {/* Checkbox */}
-                            <button
-                              onClick={(e) => {
-                                e.stopPropagation();
-                                toggleTaskSelection(task._id);
-                              }}
-                              className={cn(
-                                "flex-shrink-0 w-5 h-5 mt-0.5 rounded border-2 flex items-center justify-center transition-colors",
-                                selectedTaskIds.has(task._id)
-                                  ? "bg-blue-600 border-blue-600"
-                                  : isDarkMode ? "border-gray-600 hover:border-gray-500" : "border-gray-300 hover:border-gray-400"
-                              )}
-                            >
-                              {selectedTaskIds.has(task._id) && (
-                                <Check className="w-3 h-3 text-white" />
-                              )}
-                            </button>
-
-                            {/* Task Content - clickable to edit */}
-                            <div
-                              onClick={() => {
-                                setStatsDrawerType(null);
-                                clearSelection();
-                                void openTaskForEdit(task);
-                              }}
-                              className="flex-1 min-w-0 cursor-pointer"
-                            >
-                              <h4 className={cn(
-                                "font-medium truncate",
-                                task.status === "completed" && "line-through opacity-60"
-                              )}>
-                                {task.title}
-                              </h4>
-                              {task.description && (
-                                <p className={cn(
-                                  "text-sm mt-1 line-clamp-2",
-                                  isDarkMode ? "text-gray-400" : "text-gray-600"
-                                )}>
-                                  {task.description}
-                                </p>
-                              )}
-                              <div className="flex flex-wrap items-center gap-2 mt-2">
-                                <span className={cn(
-                                  "text-xs px-2 py-0.5 rounded",
-                                  task.quadrant === "urgent-important" && "bg-red-500/20 text-red-400",
-                                  task.quadrant === "important-not-urgent" && "bg-yellow-500/20 text-yellow-400",
-                                  task.quadrant === "urgent-not-important" && "bg-blue-500/20 text-[var(--accent)]",
-                                  task.quadrant === "not-urgent-not-important" && "bg-green-500/20 text-green-400"
-                                )}>
-                                  {quadrantConfig[task.quadrant].title}
-                                </span>
-                                {task.status === "completed" && (
-                                  <span className="text-xs px-2 py-0.5 rounded bg-green-500/20 text-green-400">
-                                    Completed
-                                  </span>
-                                )}
-                                {task.dueDate && (
-                                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                    {format(new Date(task.dueDate), "MMM dd")} • {format(new Date(task.dueDate), "HH:mm")}
-                                  </span>
-                                )}
-                              </div>
-                            </div>
-
-                            {(task.priority === "high" || task.quadrant === "urgent-important") && task.status !== "completed" && (
-                              <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0" />
-                            )}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              </div>
-            )}
-          </Dialog.Content>
-        </Dialog.Portal>
-      </Dialog.Root>
 
       {/* Calendar Planning Drawer */}
       <Dialog.Root open={isCalendarDrawerOpen} onOpenChange={setIsCalendarDrawerOpen}>
@@ -4179,6 +3437,86 @@ export default function HomePage() {
           </div>
         </div>
       )}
+      {/* Search command palette */}
+      {searchOpen && (
+        <>
+          <div onClick={() => setSearchOpen(false)} className="fixed inset-0 z-[70]" style={{ background: "var(--overlay)", animation: "fadeIn .15s ease" }} />
+          <div className="fixed left-1/2 -translate-x-1/2 top-[12vh] z-[71] w-[580px] max-w-[92vw] rounded-[16px] overflow-hidden"
+            style={{ background: "var(--drawer)", border: "1px solid var(--drawer-bd)", boxShadow: "0 30px 70px -30px rgba(70,55,30,0.5)" }}>
+            <div className="flex items-center gap-3 px-4 py-3" style={{ borderBottom: "1px solid var(--line2)" }}>
+              <Search className="w-4 h-4" style={{ color: "var(--muted)" }} />
+              <input
+                autoFocus
+                type="text"
+                placeholder="Search tasks and routines…"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => { if (e.key === "Escape") setSearchOpen(false); }}
+                className="flex-1 bg-transparent outline-none text-[15px]"
+                style={{ color: "var(--ink)" }}
+              />
+              <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: "var(--chip)", color: "var(--muted)" }}>esc</span>
+            </div>
+            <div className="max-h-[52vh] overflow-y-auto py-2">
+              {(() => {
+                const q = searchQuery.trim().toLowerCase();
+                const matchTasks = q
+                  ? tasks.filter(t => t.title.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q))
+                  : [];
+                const matchRoutine = q ? checklistItems.filter(i => i.title.toLowerCase().includes(q)) : [];
+                if (!q) {
+                  return <div className="px-4 py-6 text-[13px] text-center" style={{ color: "var(--muted)" }}>Start typing to find a task or routine item.</div>;
+                }
+                if (matchTasks.length === 0 && matchRoutine.length === 0) {
+                  return <div className="px-4 py-6 text-[13px] text-center" style={{ color: "var(--muted)" }}>No matches for &ldquo;{searchQuery}&rdquo;.</div>;
+                }
+                return (
+                  <>
+                    {MATRIX_ORDER.map((quadrant) => {
+                      const rows = matchTasks.filter(t => t.quadrant === quadrant);
+                      if (rows.length === 0) return null;
+                      const meta = MATRIX_META[quadrant];
+                      return (
+                        <div key={quadrant} className="mb-1">
+                          <div className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--muted2)" }}>{meta.name} · {rows.length}</div>
+                          {rows.map((t) => (
+                            <button key={t._id}
+                              onClick={() => { setSearchOpen(false); void openTaskForEdit(t); }}
+                              className="hovrow w-full flex items-center gap-3 px-4 py-2 text-left">
+                              <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: meta.color }} />
+                              <span className="flex-1 text-[14px] truncate" style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink2)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>{t.title}</span>
+                              {isTaskOverdue(t) && <span className="text-[10px] px-[7px] py-px rounded-[5px]" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>Overdue</span>}
+                              {t.dueDate && !isTaskOverdue(t) && <span className="text-[11px]" style={{ color: "var(--muted)" }}>{format(new Date(t.dueDate), "MMM d")}</span>}
+                            </button>
+                          ))}
+                        </div>
+                      );
+                    })}
+                    {matchRoutine.length > 0 && (
+                      <div className="mb-1">
+                        <div className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--muted2)" }}>Routine · {matchRoutine.length}</div>
+                        {matchRoutine.map((i) => (
+                          <button key={i._id}
+                            onClick={() => { setSearchOpen(false); setRoutineDrawerOpen(true); }}
+                            className="hovrow w-full flex items-center gap-3 px-4 py-2 text-left">
+                            <Repeat className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+                            <span className="flex-1 text-[14px] truncate" style={{ color: "var(--ink2)" }}>{i.title}</span>
+                            <span className="text-[11px]" style={{ color: "var(--muted)" }}>{i.frequency}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                  </>
+                );
+              })()}
+            </div>
+            <div className="flex items-center gap-4 px-4 py-2 text-[11px]" style={{ borderTop: "1px solid var(--line2)", color: "var(--muted)" }}>
+              <span>↵ open</span><span>esc close</span>
+            </div>
+          </div>
+        </>
+      )}
+
       {/* Floating Action Button */}
       <button
         onClick={() => openModalForQuadrant("urgent-important")}
