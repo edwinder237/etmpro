@@ -523,6 +523,10 @@ export default function HomePage() {
     daysOfWeek: [] as number[],
   });
 
+  // Calm Editorial redesign drawers
+  const [routineDrawerOpen, setRoutineDrawerOpen] = useState(false);
+  const [paymentsDrawerOpen, setPaymentsDrawerOpen] = useState(false);
+
   // Goals state
   const [goals, setGoals] = useState<Goal[]>([]);
   const [goalsLoading, setGoalsLoading] = useState(false);
@@ -3708,1175 +3712,101 @@ export default function HomePage() {
         </Dialog.Portal>
       </Dialog.Root>
 
-      {/* Today + Weather row */}
-      <div className="px-4 md:px-6 pb-4 md:pb-6">
-        <div className="grid grid-cols-1 xl:grid-cols-3 gap-4">
-
-        {/* Weather Widget */}
-        <div className={cn("rounded-lg p-3 md:p-4 xl:order-2", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-          {weatherLoading ? (
-            <div className="flex items-center gap-2">
-              <Loader2 className={cn("w-5 h-5 animate-spin", isDarkMode ? "text-gray-400" : "text-gray-500")} />
-              <span className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-500")}>Loading weather...</span>
-            </div>
-          ) : weatherError ? (
-            <div className="space-y-2">
-              <p className={cn("text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                {weatherError}
-              </p>
-              <div className="flex items-center gap-2">
-                <MapPin className={cn("w-4 h-4 shrink-0", isDarkMode ? "text-gray-500" : "text-gray-400")} />
-                <input
-                  type="text"
-                  defaultValue={weatherLocation}
-                  onKeyDown={(e) => {
-                    if (e.key === "Enter") {
-                      const val = (e.target as HTMLInputElement).value.trim();
-                      if (val) {
-                        setWeatherLocation(val);
-                        safeSetItem("eisenq-weather-location", val);
-                      }
-                    }
-                  }}
-                  className={cn(
-                    "flex-1 text-sm px-3 py-1.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                    isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                  )}
-                  placeholder="Try a different city..."
-                />
-                <button
-                  onClick={() => void fetchWeather(weatherLocation, undefined, true)}
-                  className="px-3 py-1.5 rounded-lg text-sm font-medium bg-blue-600 text-white hover:bg-blue-700 transition-colors"
-                >
-                  Retry
-                </button>
-              </div>
-            </div>
-          ) : weatherData ? (
-            <div>
-              {/* Location */}
-              <div className="mb-2">
-                {isEditingLocation ? (
-                  <div className="flex items-center gap-2">
-                    <MapPin className={cn("w-4 h-4 shrink-0", isDarkMode ? "text-gray-500" : "text-gray-400")} />
-                    <input
-                      ref={locationInputRef}
-                      type="text"
-                      value={locationInput}
-                      onChange={(e) => setLocationInput(e.target.value)}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") handleLocationSubmit();
-                        if (e.key === "Escape") setIsEditingLocation(false);
-                      }}
-                      onBlur={handleLocationSubmit}
-                      className={cn(
-                        "text-sm px-2 py-1 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500 w-full",
-                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                      )}
-                      placeholder="Type a city name..."
-                    />
-                  </div>
-                ) : (
-                  <button
-                    onClick={startEditingLocation}
-                    className={cn("flex items-center gap-1.5 text-sm hover:underline", isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-500 hover:text-gray-700")}
-                  >
-                    <MapPin className="w-4 h-4" />
-                    <span>{weatherLocation}</span>
-                    <Edit3 className="w-3 h-3 ml-1 opacity-50" />
-                  </button>
-                )}
-              </div>
-
-              {/* Current weather */}
-              <div className="flex items-center gap-3">
-                <WeatherIcon
-                  icon={WEATHER_CODE_MAP[weatherData.weatherCode]?.icon ?? "cloud"}
-                  className={cn("w-8 h-8",
-                    (WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "sun") ? "text-yellow-400" :
-                    (WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "rain" || WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "drizzle") ? "text-blue-400" :
-                    (WEATHER_CODE_MAP[weatherData.weatherCode]?.icon === "snow") ? "text-sky-300" :
-                    isDarkMode ? "text-gray-400" : "text-gray-500"
-                  )}
-                />
-                <div>
-                  <div className="flex items-baseline gap-2">
-                    <span className="text-xl font-semibold">{weatherData.temp}°C</span>
-                    <span className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-600")}>
-                      {WEATHER_CODE_MAP[weatherData.weatherCode]?.label ?? "Unknown"}
-                    </span>
-                  </div>
-                  <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                    Feels like {weatherData.feelsLike}°C
-                  </span>
-                </div>
-              </div>
-
-              {/* Activity + Clothing suggestion */}
-              <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                <div className="flex items-center gap-2 mb-2">
-                  <input
-                    type="text"
-                    value={plannedActivity}
-                    onChange={(e) => setPlannedActivity(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && weatherData && geminiApiKey) {
-                        void fetchClothingSuggestion(plannedActivity);
-                      }
-                    }}
-                    placeholder="Planned activity (e.g. running, cycling, hiking)..."
-                    className={cn(
-                      "flex-1 text-sm px-3 py-1.5 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
-                      isDarkMode ? "bg-gray-800 border-gray-700 text-white placeholder-gray-600" : "bg-white border-gray-300 placeholder-gray-400"
-                    )}
-                  />
-                  <button
-                    onClick={() => {
-                      if (weatherData && geminiApiKey) {
-                        void fetchClothingSuggestion(plannedActivity);
-                      }
-                    }}
-                    disabled={clothingLoading || !geminiApiKey}
-                    className={cn(
-                      "px-3 py-1.5 rounded-lg text-sm font-medium transition-colors disabled:opacity-50",
-                      "bg-blue-600 text-white hover:bg-blue-700"
-                    )}
-                  >
-                    {clothingLoading ? <Loader2 className="w-4 h-4 animate-spin" /> : "Ask AI"}
-                  </button>
-                </div>
-                <div className={cn("text-sm", isDarkMode ? "text-gray-400" : "text-gray-500")}>
-                  <span className={cn("font-medium", isDarkMode ? "text-gray-300" : "text-gray-600")}>What to wear: </span>
-                  {clothingLoading ? (
-                    <span className="inline-flex items-center gap-1.5">
-                      <Loader2 className="w-3 h-3 animate-spin" />
-                      Thinking...
-                    </span>
-                  ) : clothingSuggestion ? (
-                    <span>{clothingSuggestion}</span>
-                  ) : (
-                    <span>
-                      {getClothingSuggestion(weatherData.feelsLike, weatherData.weatherCode).join(". ")}
-                      {!geminiApiKey && (
-                        <>
-                          {" — "}
-                          <button
-                            onClick={() => { setSettingsKeyInput(""); setIsSettingsOpen(true); }}
-                            className="text-blue-500 hover:underline"
-                          >
-                            Enable AI suggestions
-                          </button>
-                        </>
-                      )}
-                    </span>
-                  )}
-                </div>
-              </div>
-
-              {/* Hourly forecast */}
-              {weatherData.hourly.length > 0 && (
-                <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                  <p className={cn("text-xs font-medium mb-2", isDarkMode ? "text-gray-500" : "text-gray-400")}>Rest of today</p>
-                  <div className="flex gap-3 overflow-x-auto pb-1">
-                    {weatherData.hourly.map((h) => (
-                      <div key={h.time} className="flex flex-col items-center gap-1 min-w-[3rem]">
-                        <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>{h.time}</span>
-                        <WeatherIcon
-                          icon={WEATHER_CODE_MAP[h.weatherCode]?.icon ?? "cloud"}
-                          className={cn("w-4 h-4",
-                            (WEATHER_CODE_MAP[h.weatherCode]?.icon === "sun") ? "text-yellow-400" :
-                            (WEATHER_CODE_MAP[h.weatherCode]?.icon === "rain" || WEATHER_CODE_MAP[h.weatherCode]?.icon === "drizzle") ? "text-blue-400" :
-                            (WEATHER_CODE_MAP[h.weatherCode]?.icon === "snow") ? "text-sky-300" :
-                            isDarkMode ? "text-gray-400" : "text-gray-500"
-                          )}
-                        />
-                        <span className={cn("text-xs font-medium")}>{h.temp}°</span>
-                      </div>
-                    ))}
-                  </div>
-                </div>
-              )}
-            </div>
-          ) : null}
+      {/* ===== Today (routine + schedule) ===== */}
+      <div className="mx-auto max-w-[1320px] px-5 md:px-10 mb-[22px]">
+        <div className="flex flex-wrap items-baseline gap-3 mt-1 mb-4">
+          <span style={{ fontFamily: "var(--font-serif)" }} className="text-[23px] md:text-[26px]">Today</span>
+          <span className="text-[13px]" style={{ color: "var(--muted)" }}>your routine and what&apos;s on the calendar</span>
         </div>
-
-        {/* Today — Routine + Calendar (unified card) */}
-        <div className={cn("xl:order-1 xl:col-span-2 rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-
-          {/* Shared header */}
-          <button
-            onClick={toggleChecklistCollapsed}
-            className={cn(
-              "w-full flex items-center justify-between p-3 md:p-4 rounded-t-lg",
-              isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <div className="flex -space-x-1">
-                <div className="p-1.5 rounded-lg bg-purple-600/20">
-                  <CheckCircle2 className="w-4 h-4 text-purple-500" />
-                </div>
-                {hasSidePanel && (
-                  <div className="p-1.5 rounded-lg bg-blue-600/20">
-                    <Calendar className="w-4 h-4 text-blue-500" />
-                  </div>
-                )}
+        <div className="grid grid-cols-1 lg:grid-cols-[1fr_340px] gap-[22px]">
+          {/* Today's routine */}
+          <div className="rounded-2xl" style={{ background: "var(--card)", border: "1px solid var(--card-bd)", padding: "22px 24px" }}>
+            <div className="flex items-baseline justify-between mb-3">
+              <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[20px]">Today&apos;s routine</span>
+              <button onClick={() => setRoutineDrawerOpen(true)} className="text-[12px]" style={{ color: "var(--accent)" }}>Manage ›</button>
+            </div>
+            {todaysChecklistItems.length === 0 ? (
+              <div className="py-1">
+                <div className="text-[14px]" style={{ color: "var(--ink3)" }}>No routine yet.</div>
+                <div className="text-[12.5px] mt-1 mb-3" style={{ color: "var(--muted)" }}>Add the small daily things you want to stay on top of.</div>
+                <button onClick={() => setRoutineDrawerOpen(true)} className="text-[12.5px] font-semibold" style={{ color: "var(--accent)" }}>+ Build your routine</button>
               </div>
-              <h2 className="font-semibold text-sm md:text-base">Today</h2>
-              {calendarLoading && <Loader2 className="w-3.5 h-3.5 animate-spin text-gray-400" />}
-            </div>
-            <div className="flex items-center gap-3">
-              {todaysChecklistItems.length > 0 && (
-                <div className="flex items-center gap-2">
-                  <span className={cn("text-xs font-medium", isDarkMode ? "text-gray-400" : "text-gray-500")}>
-                    {completedCount}/{todaysChecklistItems.length}
-                  </span>
-                  <div className={cn("w-16 h-1.5 rounded-full overflow-hidden", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
-                    <div
-                      className="h-full rounded-full bg-purple-500 transition-all duration-300"
-                      style={{ width: `${todaysChecklistItems.length > 0 ? (completedCount / todaysChecklistItems.length) * 100 : 0}%` }}
-                    />
-                  </div>
-                </div>
-              )}
-              {isChecklistCollapsed ? (
-                <ChevronDown className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
-              ) : (
-                <ChevronUp className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
-              )}
-            </div>
-          </button>
-
-          {/* Body: two columns when calendar is active */}
-          {!isChecklistCollapsed && (
-            <div className={cn(
-              "flex flex-col lg:flex-row",
-              hasSidePanel && (isDarkMode ? "divide-y lg:divide-y-0 lg:divide-x divide-gray-800" : "divide-y lg:divide-y-0 lg:divide-x divide-gray-100")
-            )}>
-
-              {/* Routine column */}
-              <div className={cn("px-3 md:px-4 pb-3 md:pb-4", hasSidePanel ? "lg:w-2/3" : "w-full")}>
-                {/* Tab toggle */}
-                <div className="flex items-center gap-1 mt-1 mb-2">
-                  <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
-                    {(["today", "all", "maintenance"] as const).map(tab => (
-                      <button
-                        key={tab}
-                        onClick={() => { setChecklistTab(tab); setShowAllChecklistItems(tab === "all"); }}
-                        className={cn(
-                          "px-2.5 py-1 text-xs rounded-md font-medium transition-colors capitalize",
-                          checklistTab === tab
-                            ? "bg-purple-600 text-white"
-                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                        )}
-                      >
-                        {tab}
-                      </button>
-                    ))}
-                  </div>
-                </div>
-
-                {/* Routine tabs: Today / All */}
-                {checklistTab !== "maintenance" && (
-                  <>
-                    {(() => {
-                      const displayItems = showAllChecklistItems ? checklistItems : todaysChecklistItems;
-                      if (displayItems.length === 0 && !showChecklistForm) {
-                        return (
-                          <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                            <Circle className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                            <p className="text-sm">{showAllChecklistItems ? "No routine items yet" : "No routine items for today"}</p>
-                            <button
-                              onClick={() => setShowChecklistForm(true)}
-                              className="text-xs text-purple-500 hover:text-purple-400 mt-1"
-                            >
-                              Add your first routine
-                            </button>
-                          </div>
-                        );
-                      }
-                      return (
-                        <DndContext sensors={checklistSensors} collisionDetection={closestCenter} onDragEnd={handleChecklistDragEnd}>
-                          <SortableContext items={displayItems.map(i => i._id)} strategy={verticalListSortingStrategy}>
-                            <div className="space-y-1">
-                              {displayItems.map((item) => {
-                                const visibleToday = isChecklistItemVisibleToday(item);
-                                return (
-                                  <div key={item._id} className={cn(!visibleToday && showAllChecklistItems && "opacity-50")}>
-                                    <SortableChecklistItem
-                                      item={item}
-                                      isCompleted={visibleToday ? isChecklistItemCompletedToday(item) : false}
-                                      isDarkMode={isDarkMode}
-                                      onToggle={handleToggleChecklistItem}
-                                      onEdit={openChecklistItemForEdit}
-                                      onDelete={handleDeleteChecklistItem}
-                                    />
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          </SortableContext>
-                        </DndContext>
-                      );
-                    })()}
-
-                    {/* Add/Edit Form */}
-                    {showChecklistForm ? (
-                      <div className={cn(
-                        "mt-3 p-3 rounded-lg border space-y-3",
-                        isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
-                      )}>
-                        <input
-                          type="text"
-                          placeholder="Routine item title..."
-                          value={checklistFormData.title}
-                          onChange={(e) => setChecklistFormData(prev => ({ ...prev, title: e.target.value }))}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter" && checklistFormData.title.trim()) {
-                              void (editingChecklistItem ? handleUpdateChecklistItem() : handleAddChecklistItem());
-                            }
-                          }}
-                          autoFocus
-                          className={cn(
-                            "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
-                            isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                          )}
-                        />
-                        <div className="flex items-center gap-2">
-                          <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Frequency:</span>
-                          <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
-                            <button
-                              onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "daily", daysOfWeek: [] }))}
-                              className={cn(
-                                "px-3 py-1 text-xs rounded-md font-medium transition-colors",
-                                checklistFormData.frequency === "daily"
-                                  ? "bg-purple-600 text-white"
-                                  : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                              )}
-                            >
-                              Daily
-                            </button>
-                            <button
-                              onClick={() => setChecklistFormData(prev => ({ ...prev, frequency: "weekly" }))}
-                              className={cn(
-                                "px-3 py-1 text-xs rounded-md font-medium transition-colors",
-                                checklistFormData.frequency === "weekly"
-                                  ? "bg-purple-600 text-white"
-                                  : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                              )}
-                            >
-                              Weekly
-                            </button>
-                          </div>
-                        </div>
-                        {checklistFormData.frequency === "weekly" && (
-                          <div className="flex items-center gap-1.5">
-                            {DAY_LABELS.map((label, i) => (
-                              <button
-                                key={label}
-                                onClick={() => {
-                                  setChecklistFormData(prev => ({
-                                    ...prev,
-                                    daysOfWeek: prev.daysOfWeek.includes(i)
-                                      ? prev.daysOfWeek.filter(d => d !== i)
-                                      : [...prev.daysOfWeek, i],
-                                  }));
-                                }}
-                                className={cn(
-                                  "w-8 h-8 rounded-full text-xs font-medium transition-colors",
-                                  checklistFormData.daysOfWeek.includes(i)
-                                    ? "bg-purple-600 text-white"
-                                    : isDarkMode ? "bg-gray-700 text-gray-400 hover:bg-gray-600" : "bg-gray-200 text-gray-600 hover:bg-gray-300"
-                                )}
-                              >
-                                {label.charAt(0)}
-                              </button>
-                            ))}
-                          </div>
-                        )}
-                        <div className="flex gap-2">
-                          <button
-                            onClick={resetChecklistForm}
-                            className={cn(
-                              "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                              isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
-                            )}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={editingChecklistItem ? handleUpdateChecklistItem : handleAddChecklistItem}
-                            disabled={!checklistFormData.title.trim() || checklistLoading || (checklistFormData.frequency === "weekly" && checklistFormData.daysOfWeek.length === 0)}
-                            className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
-                          >
-                            {checklistLoading ? "Saving..." : editingChecklistItem ? "Update" : "Add"}
-                          </button>
-                        </div>
-                      </div>
-                    ) : (showAllChecklistItems ? checklistItems.length > 0 : todaysChecklistItems.length > 0) && (
-                      <button
-                        onClick={() => setShowChecklistForm(true)}
-                        className={cn(
-                          "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
-                          isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                        )}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Add routine item
-                      </button>
-                    )}
-
-                    {/* Due maintenance items on Today tab */}
-                    {checklistTab === "today" && (() => {
-                      const today = new Date();
-                      today.setHours(0, 0, 0, 0);
-                      const dueItems = maintenanceItems.filter(item => {
-                        const due = new Date(item.nextDueDate + "T00:00:00");
-                        return due.getTime() <= today.getTime() + 7 * 86400000; // due within 7 days
-                      });
-                      if (!dueItems.length) return null;
-                      return (
-                        <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                          <p className={cn("text-xs font-semibold uppercase tracking-wide mb-2 px-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                            Maintenance due
-                          </p>
-                          <div className="space-y-1">
-                            {dueItems.map(item => {
-                              const due = new Date(item.nextDueDate + "T00:00:00");
-                              const diffDays = Math.round((due.getTime() - today.getTime()) / 86400000);
-                              const isOverdue = diffDays < 0;
-                              return (
-                                <div key={item._id} className={cn("flex items-center gap-3 py-1.5 px-2 rounded-lg", isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50")}>
-                                  <button
-                                    onClick={() => void handleMarkMaintenanceDone(item._id)}
-                                    className="flex-shrink-0"
-                                    title="Mark as done — resets the timer"
-                                  >
-                                    <Circle className={cn("w-5 h-5", isOverdue ? "text-red-400" : "text-yellow-500")} />
-                                  </button>
-                                  <span className={cn("flex-1 text-sm truncate", isDarkMode ? "text-gray-200" : "text-gray-700")}>{item.title}</span>
-                                  <span className={cn("text-xs flex-shrink-0", isOverdue ? "text-red-400" : "text-yellow-500")}>
-                                    {isOverdue ? `${Math.abs(diffDays)}d overdue` : diffDays === 0 ? "today" : `in ${diffDays}d`}
-                                  </span>
-                                </div>
-                              );
-                            })}
-                          </div>
-                        </div>
-                      );
-                    })()}
-
-                    {/* Payments failures are otherwise invisible — surface them with a retry */}
-                    {checklistTab === "today" && paymentsError && (
-                      <div className={cn(
-                        "mt-3 pt-3 border-t flex items-center justify-between px-1",
-                        isDarkMode ? "border-gray-800" : "border-gray-200"
-                      )}>
-                        <span className={cn("text-xs flex items-center gap-1.5", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                          <AlertCircle className="w-3.5 h-3.5" />
-                          Couldn&apos;t load payments
-                        </span>
-                        <button
-                          onClick={() => void fetchPaymentsDue()}
-                          className="text-xs text-blue-500 hover:text-blue-400"
-                        >
-                          Retry
-                        </button>
-                      </div>
-                    )}
-
-                    {/* Payments due on Today tab (external finance API, grouped by account) */}
-                    {checklistTab === "today" && paymentsData?.configured && (() => {
-                      const accounts = paymentsData.accounts ?? [];
-                      const budgets = paymentsData.budgets ?? [];
-                      const budgetTotal = budgets.reduce((s, b) => s + b.amount, 0);
-                      const rows = [
-                        ...accounts.map(a => ({ id: a.id, name: a.shortName, total: a.total, items: a.items })),
-                        ...(budgets.length > 0 ? [{ id: "budgets", name: "Other payments", total: budgetTotal, items: budgets }] : []),
-                      ];
-                      if (!rows.length) return null;
-                      const totalDue = rows.reduce((s, r) => s + r.total, 0);
-                      const finalBalance = paymentsData.finalBalance ?? 0;
-                      return (
-                        <div className={cn("mt-3 pt-3 border-t", isDarkMode ? "border-gray-800" : "border-gray-200")}>
-                          <div className="flex items-baseline justify-between mb-2 px-1">
-                            <p className={cn("text-xs font-semibold uppercase tracking-wide", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                              Payments due
-                            </p>
-                            <span className="text-xs font-medium text-red-400">{formatPaymentAmount(totalDue)}</span>
-                          </div>
-                          <div className="space-y-0.5">
-                            {rows.map(row => {
-                              const isPaid = paidPaymentAccounts.has(row.id);
-                              const isExpanded = expandedPaymentAccounts.has(row.id);
-                              return (
-                                <div key={row.id}>
-                                  <div className={cn("flex items-center gap-3 py-1.5 px-2 rounded-lg", isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50")}>
-                                    <button
-                                      onClick={() => togglePaymentAccountPaid(row.id)}
-                                      className="flex-shrink-0"
-                                      title={isPaid ? "Mark as unpaid" : "Mark as paid"}
-                                    >
-                                      {isPaid ? (
-                                        <CheckCircle2 className="w-5 h-5 text-green-500" />
-                                      ) : (
-                                        <Circle className="w-5 h-5 text-red-400" />
-                                      )}
-                                    </button>
-                                    <div className="flex-1 min-w-0">
-                                      <p className={cn("text-sm font-medium truncate", isPaid && "line-through opacity-60", isDarkMode ? "text-gray-200" : "text-gray-700")}>
-                                        {row.name}
-                                      </p>
-                                      <p className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                        {row.items.length} payment{row.items.length !== 1 ? "s" : ""}
-                                      </p>
-                                    </div>
-                                    <span className={cn("text-sm font-medium flex-shrink-0", isPaid ? "line-through opacity-60" : "", isDarkMode ? "text-gray-300" : "text-gray-600")}>
-                                      {formatPaymentAmount(row.total)}
-                                    </span>
-                                    <button
-                                      onClick={() => togglePaymentAccountExpanded(row.id)}
-                                      className={cn(
-                                        "flex-shrink-0 p-1 rounded-full transition-colors",
-                                        isExpanded
-                                          ? "bg-blue-600/20 text-blue-500"
-                                          : isDarkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600"
-                                      )}
-                                      title={isExpanded ? "Hide details" : "Show details"}
-                                    >
-                                      <Info className="w-4 h-4" />
-                                    </button>
-                                  </div>
-                                  {isExpanded && (
-                                    <div className={cn("ml-10 mr-9 mb-1.5 px-3 py-1 rounded-lg", isDarkMode ? "bg-gray-800/50" : "bg-gray-50")}>
-                                      {[...row.items].sort((a, b) => a.amount - b.amount).map((it, ii) => (
-                                        <div
-                                          key={ii}
-                                          className={cn(
-                                            "flex items-center justify-between gap-3 py-1 text-xs",
-                                            ii > 0 && (isDarkMode ? "border-t border-gray-800" : "border-t border-gray-200")
-                                          )}
-                                        >
-                                          <span className={cn("truncate", isDarkMode ? "text-gray-400" : "text-gray-500")}>{it.label}</span>
-                                          <span className={cn("flex-shrink-0", isDarkMode ? "text-gray-300" : "text-gray-600")}>{formatPaymentAmount(it.amount)}</span>
-                                        </div>
-                                      ))}
-                                    </div>
-                                  )}
-                                </div>
-                              );
-                            })}
-                          </div>
-                          <div className={cn("flex items-center justify-between mt-2 pt-2 border-t text-xs", isDarkMode ? "border-gray-800 text-gray-500" : "border-gray-200 text-gray-400")}>
-                            <span>Income {formatPaymentAmount(paymentsData.totalIncome ?? 0)}</span>
-                            <span>
-                              Day ends{" "}
-                              <span className={cn("font-medium", finalBalance >= 0 ? "text-green-500" : "text-red-400")}>
-                                {finalBalance >= 0 ? "+" : "-"}{formatPaymentAmount(finalBalance)}
-                              </span>
-                            </span>
-                          </div>
-                        </div>
-                      );
-                    })()}
-                  </>
-                )}
-
-                {/* Maintenance tab */}
-                {checklistTab === "maintenance" && (
-                  <div>
-                    {maintenanceItems.length === 0 && !showMaintenanceForm ? (
-                      <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                        <Repeat className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                        <p className="text-sm">No maintenance items yet</p>
-                        <button
-                          onClick={() => setShowMaintenanceForm(true)}
-                          className="text-xs text-purple-500 hover:text-purple-400 mt-1"
-                        >
-                          Add your first item
-                        </button>
-                      </div>
-                    ) : (
-                      <div className="space-y-1.5">
-                        {maintenanceItems.map((item) => {
-                          const today = new Date();
-                          today.setHours(0, 0, 0, 0);
-                          const due = new Date(item.nextDueDate + "T00:00:00");
-                          const diffMs = due.getTime() - today.getTime();
-                          const diffDays = Math.round(diffMs / 86400000);
-                          const isOverdue = diffDays < 0;
-                          const isDueSoon = diffDays >= 0 && diffDays <= 7;
-
-                          return (
-                            <div
-                              key={item._id}
-                              className={cn(
-                                "flex items-center gap-3 py-2 px-2 rounded-lg",
-                                isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
-                              )}
-                            >
-                              <button
-                                onClick={() => void handleMarkMaintenanceDone(item._id)}
-                                className="flex-shrink-0"
-                                title="Mark as done — resets the timer"
-                              >
-                                <Circle className={cn("w-5 h-5", isOverdue ? "text-red-400" : isDueSoon ? "text-yellow-500" : isDarkMode ? "text-gray-600" : "text-gray-300")} />
-                              </button>
-                              <div className="flex-1 min-w-0">
-                                <p className={cn("text-sm font-medium truncate", isDarkMode ? "text-gray-200" : "text-gray-700")}>
-                                  {item.title}
-                                </p>
-                                <p className={cn("text-xs", isOverdue ? "text-red-400" : isDueSoon ? "text-yellow-500" : isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                  {isOverdue
-                                    ? `Overdue by ${Math.abs(diffDays)} day${Math.abs(diffDays) !== 1 ? "s" : ""}`
-                                    : diffDays === 0
-                                      ? "Due today"
-                                      : `Due in ${diffDays} day${diffDays !== 1 ? "s" : ""}`}
-                                  {" · every "}
-                                  {item.intervalDays >= 365
-                                    ? `${Math.round(item.intervalDays / 365)} year${Math.round(item.intervalDays / 365) !== 1 ? "s" : ""}`
-                                    : item.intervalDays >= 30
-                                      ? `${Math.round(item.intervalDays / 30)} month${Math.round(item.intervalDays / 30) !== 1 ? "s" : ""}`
-                                      : `${item.intervalDays} day${item.intervalDays !== 1 ? "s" : ""}`}
-                                </p>
-                              </div>
-                              <div className="flex items-center gap-0.5">
-                                <button
-                                  onClick={() => {
-                                    setEditingMaintenanceItem(item);
-                                    setMaintenanceFormData({ title: item.title, intervalDays: item.intervalDays, nextDueDate: item.nextDueDate });
-                                    setShowMaintenanceForm(true);
-                                  }}
-                                  className={cn("p-1 rounded", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-200")}
-                                >
-                                  <Edit3 className="w-3.5 h-3.5" />
-                                </button>
-                                <button
-                                  onClick={() => void handleDeleteMaintenanceItem(item._id)}
-                                  className={cn("p-1 rounded text-red-400", isDarkMode ? "hover:bg-red-500/20" : "hover:bg-red-50")}
-                                >
-                                  <Trash2 className="w-3.5 h-3.5" />
-                                </button>
-                              </div>
-                            </div>
-                          );
-                        })}
-                      </div>
-                    )}
-
-                    {/* Maintenance Add/Edit Form */}
-                    {showMaintenanceForm ? (
-                      <div className={cn(
-                        "mt-3 p-3 rounded-lg border space-y-3",
-                        isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
-                      )}>
-                        <input
-                          type="text"
-                          placeholder="e.g. Doctor appointment, Change toothbrush..."
-                          value={maintenanceFormData.title}
-                          onChange={(e) => setMaintenanceFormData(prev => ({ ...prev, title: e.target.value }))}
-                          autoFocus
-                          className={cn(
-                            "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-purple-500",
-                            isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                          )}
-                        />
-                        <div className="flex items-center gap-2 flex-wrap">
-                          <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Every:</span>
-                          <div className={cn("inline-flex rounded-lg p-0.5 flex-wrap", isDarkMode ? "bg-gray-700" : "bg-gray-200")}>
-                            {INTERVAL_PRESETS.map(p => (
-                              <button
-                                key={p.days}
-                                onClick={() => setMaintenanceFormData(prev => ({ ...prev, intervalDays: p.days }))}
-                                className={cn(
-                                  "px-2.5 py-1 text-xs rounded-md font-medium transition-colors",
-                                  maintenanceFormData.intervalDays === p.days
-                                    ? "bg-purple-600 text-white"
-                                    : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                                )}
-                              >
-                                {p.label}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="flex items-center gap-2">
-                          <span className={cn("text-xs", isDarkMode ? "text-gray-400" : "text-gray-500")}>Next due:</span>
-                          <input
-                            type="date"
-                            value={maintenanceFormData.nextDueDate}
-                            onChange={(e) => setMaintenanceFormData(prev => ({ ...prev, nextDueDate: e.target.value }))}
-                            className={cn(
-                              "px-2 py-1 rounded-lg border text-xs focus:outline-none focus:ring-2 focus:ring-purple-500",
-                              isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                            )}
-                          />
-                          <span className={cn("text-xs", isDarkMode ? "text-gray-600" : "text-gray-400")}>(optional)</span>
-                        </div>
-                        <div className="flex gap-2">
-                          <button
-                            onClick={resetMaintenanceForm}
-                            className={cn(
-                              "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                              isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
-                            )}
-                          >
-                            Cancel
-                          </button>
-                          <button
-                            onClick={() => void (editingMaintenanceItem ? handleUpdateMaintenanceItem() : handleAddMaintenanceItem())}
-                            disabled={!maintenanceFormData.title.trim()}
-                            className="flex-1 px-3 py-1.5 bg-purple-600 text-white rounded-lg text-sm font-medium hover:bg-purple-700 transition-colors disabled:opacity-50"
-                          >
-                            {editingMaintenanceItem ? "Update" : "Add"}
-                          </button>
-                        </div>
-                      </div>
-                    ) : maintenanceItems.length > 0 && (
-                      <button
-                        onClick={() => setShowMaintenanceForm(true)}
-                        className={cn(
-                          "mt-2 flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
-                          isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                        )}
-                      >
-                        <Plus className="w-3.5 h-3.5" />
-                        Add maintenance item
-                      </button>
-                    )}
-                  </div>
-                )}
-              </div>
-
-              {/* Calendar Events column */}
-              {hasSidePanel && (
-                <div className="px-3 md:px-4 pb-3 md:pb-4 pt-2 lg:w-1/3">
-                  {calendarLoading && calendarGroups.length === 0 ? (
-                    <div className="space-y-2 py-2">
-                      {[1, 2, 3].map((i) => (
-                        <div key={i} className={cn("h-12 rounded-lg animate-pulse", isDarkMode ? "bg-gray-800" : "bg-gray-100")} />
-                      ))}
-                    </div>
-                  ) : (
-                    <div className="space-y-4 mt-1">
-                      {/* Scheduled in-app tasks for today */}
-                      {todaysScheduledTasks.length > 0 && (
-                        <div>
-                          <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1.5 px-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                            Scheduled Tasks
-                          </p>
-                          <div className="space-y-1.5">
-                            {todaysScheduledTasks.map((task) => (
-                              <div
-                                key={task._id}
-                                onClick={() => openCalendarTaskForEdit(task)}
-                                className={cn(
-                                  "flex items-start gap-2.5 px-3 py-2.5 rounded-lg border-l-2 cursor-pointer transition-colors",
-                                  task.quadrant === "urgent-important" && "border-red-500",
-                                  task.quadrant === "important-not-urgent" && "border-yellow-500",
-                                  task.quadrant === "urgent-not-important" && "border-blue-500",
-                                  task.quadrant === "not-urgent-not-important" && "border-green-500",
-                                  isDarkMode ? "bg-gray-800/60 hover:bg-gray-800" : "bg-gray-50 hover:bg-gray-100"
-                                )}
-                              >
-                                <div className="flex-1 min-w-0">
-                                  <p className={cn("text-sm font-medium truncate", isDarkMode ? "text-gray-100" : "text-gray-800")}>
-                                    {task.title}
-                                  </p>
-                                  <p className={cn("text-xs mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-500")}>
-                                    {task.dueDate ? new Date(task.dueDate).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : ""}
-                                    {task.duration ? ` · ${task.duration} min` : ""}
-                                  </p>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        </div>
-                      )}
-                      {calendarGroups.map((group, gi) => (
-                        <div key={gi}>
-                          <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1.5 px-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                            {group.name}
-                          </p>
-                          {group.events.length === 0 ? (
-                            <p className={cn("text-xs px-1 py-2", group.error ? "text-red-400" : isDarkMode ? "text-gray-600" : "text-gray-400")}>
-                              {group.error ? "Could not load — check URL in Settings" : "No events today"}
-                            </p>
-                          ) : (
-                            <div className="space-y-1.5">
-                              {group.events.map((event) => {
-                                const startDate = new Date(event.start);
-                                const endDate = new Date(event.end);
-                                const timeStr = event.allDay
-                                  ? "All day"
-                                  : `${startDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })} – ${endDate.toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
-                                return (
-                                  <div
-                                    key={event.id}
-                                    className={cn(
-                                      "flex items-start gap-2.5 px-3 py-2.5 rounded-lg border-l-2 border-blue-500",
-                                      isDarkMode ? "bg-gray-800/60" : "bg-blue-50/60"
-                                    )}
-                                  >
-                                    <div className="flex-1 min-w-0">
-                                      <p className={cn("text-sm font-medium truncate", isDarkMode ? "text-gray-100" : "text-gray-800")}>
-                                        {event.title}
-                                      </p>
-                                      <p className={cn("text-xs mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-500")}>
-                                        {timeStr}
-                                      </p>
-                                      {event.location && (
-                                        <p className={cn("text-xs truncate mt-0.5", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                                          <MapPin className="w-2.5 h-2.5 inline mr-0.5 -mt-px" />
-                                          {event.location}
-                                        </p>
-                                      )}
-                                    </div>
-                                  </div>
-                                );
-                              })}
-                            </div>
-                          )}
-                        </div>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              )}
-            </div>
-          )}
-        </div>
-
-        </div>{/* end grid */}
-      </div>
-
-      {/* Goals — weekly & monthly focus */}
-      <div className="px-4 md:px-6 pb-4 md:pb-6">
-        <div className={cn("rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
-
-          {/* Header */}
-          <button
-            onClick={() => { setIsGoalsExpanded(!isGoalsExpanded); resetGoalForm(); }}
-            className={cn(
-              "w-full flex items-center justify-between p-3 md:p-4 rounded-t-lg",
-              isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
-            )}
-          >
-            <div className="flex items-center gap-3">
-              <div className="p-1.5 rounded-lg bg-emerald-600/20">
-                <Target className="w-4 h-4 text-emerald-500" />
-              </div>
-              <h2 className="font-semibold text-sm md:text-base">Goals</h2>
-            </div>
-            <div className="flex items-center gap-3">
-              {(currentWeekGoals.length > 0 || currentMonthGoals.length > 0) && (
-                <span className={cn("text-xs font-medium", isDarkMode ? "text-gray-400" : "text-gray-500")}>
-                  {[...currentWeekGoals, ...currentMonthGoals].filter(g => g.status === "achieved").length}
-                  /{currentWeekGoals.length + currentMonthGoals.length} achieved
-                </span>
-              )}
-              {isGoalsExpanded ? (
-                <ChevronUp className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
-              ) : (
-                <ChevronDown className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
-              )}
-            </div>
-          </button>
-
-          <div className="px-3 md:px-4 pb-3 md:pb-4">
-            {!isGoalsExpanded ? (
-              /* Compact strip: current week + current month */
-              goals.length === 0 ? (
-                <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                  <Target className="w-8 h-8 mx-auto mb-2 opacity-50" />
-                  <p className="text-sm">Set weekly or monthly goals to keep your tasks aligned with what matters</p>
-                  <button
-                    onClick={() => openGoalsPanelWithForm("week")}
-                    className="text-xs text-emerald-500 hover:text-emerald-400 mt-1"
-                  >
-                    Add your first goal
-                  </button>
-                </div>
-              ) : (
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
-                  <div>
-                    <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                      This Week
-                    </p>
-                    {currentWeekGoals.filter(g => g.status !== "dropped").length === 0 ? (
-                      <button
-                        onClick={() => openGoalsPanelWithForm("week")}
-                        className={cn("text-xs", isDarkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")}
-                      >
-                        + Add a goal for this week
-                      </button>
-                    ) : (
-                      currentWeekGoals.filter(g => g.status !== "dropped").map(renderGoalStripRow)
-                    )}
-                  </div>
-                  <div>
-                    <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                      This Month
-                    </p>
-                    {currentMonthGoals.filter(g => g.status !== "dropped").length === 0 ? (
-                      <button
-                        onClick={() => openGoalsPanelWithForm("month")}
-                        className={cn("text-xs", isDarkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")}
-                      >
-                        + Add a goal for this month
-                      </button>
-                    ) : (
-                      currentMonthGoals.filter(g => g.status !== "dropped").map(renderGoalStripRow)
-                    )}
-                  </div>
-                </div>
-              )
             ) : (
-              /* Expanded management panel */
-              <div className="space-y-3">
-                {/* Period type toggle + navigation */}
-                <div className="flex flex-wrap items-center justify-between gap-2">
-                  <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
-                    {(["week", "month"] as const).map(pt => (
-                      <button
-                        key={pt}
-                        onClick={() => { setGoalsPanelPeriodType(pt); resetGoalForm(); }}
-                        className={cn(
-                          "px-2.5 py-1 text-xs rounded-md font-medium transition-colors",
-                          goalsPanelPeriodType === pt
-                            ? "bg-emerald-600 text-white"
-                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
-                        )}
-                      >
-                        {pt === "week" ? "Weekly" : "Monthly"}
-                      </button>
-                    ))}
+              <>
+                <div className="flex items-center gap-3 mb-[22px]">
+                  <div className="flex-1 h-[6px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
+                    <div className="h-full rounded-full" style={{ width: `${todaysChecklistItems.length ? (completedCount / todaysChecklistItems.length) * 100 : 0}%`, background: "var(--pill-active)" }} />
                   </div>
-                  <div className="flex items-center gap-1">
-                    <button
-                      onClick={() => navigateGoalsPeriod("prev")}
-                      className={cn("p-1.5 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
-                    >
-                      <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <span className="text-xs md:text-sm font-medium min-w-[140px] text-center">
-                      {goalsPanelPeriodType === "week"
-                        ? `${format(startOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")} – ${format(endOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d, yyyy")}`
-                        : format(goalsPanelDate, "MMMM yyyy")}
-                    </span>
-                    <button
-                      onClick={() => navigateGoalsPeriod("next")}
-                      className={cn("p-1.5 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
-                    >
-                      <ChevronRight className="w-4 h-4" />
-                    </button>
-                    {!isViewingCurrentPeriod && (
-                      <button
-                        onClick={() => { setGoalsPanelDate(new Date()); resetGoalForm(); }}
-                        className="text-xs text-emerald-500 hover:text-emerald-400 ml-1"
-                      >
-                        Current
-                      </button>
-                    )}
-                  </div>
+                  <span className="text-[12px] whitespace-nowrap" style={{ color: "var(--muted)" }}>{completedCount} of {todaysChecklistItems.length} done</span>
                 </div>
-
-                {/* Goal list for the viewed period */}
-                {goalsPanelGoals.length === 0 && !showGoalForm ? (
-                  <div className={cn("text-center py-4 text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>
-                    No goals for this {goalsPanelPeriodType}.
-                  </div>
-                ) : (
-                  <div className="space-y-1">
-                    {goalsPanelGoals.map(goal => {
-                      const counts = goalTaskCounts.get(goal._id);
-                      const parentGoal = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
-                      return (
-                        <div
-                          key={goal._id}
-                          className={cn(
-                            "group flex items-start gap-2 px-2 py-1.5 rounded-lg",
-                            isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50",
-                            goal.status === "dropped" && "opacity-50"
-                          )}
-                        >
-                          <button
-                            onClick={() => handleToggleGoalAchieved(goal)}
-                            className={cn(
-                              "mt-0.5 rounded-full transition-colors",
-                              goal.status === "achieved"
-                                ? "text-emerald-500"
-                                : isDarkMode ? "text-gray-400 hover:text-gray-300" : "text-gray-500 hover:text-gray-600"
-                            )}
-                          >
-                            {goal.status === "achieved" ? (
-                              <CheckCircle2 className="w-4 h-4" />
-                            ) : (
-                              <div className="w-4 h-4 rounded-full border-2 border-current" />
-                            )}
-                          </button>
-                          <div className="flex-1 min-w-0">
-                            <p className={cn(
-                              "text-sm",
-                              (goal.status === "achieved" || goal.status === "dropped") && "line-through opacity-60"
-                            )}>
-                              {goal.title}
-                            </p>
-                            {goal.note && (
-                              <p className={cn("text-xs mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-600")}>
-                                {goal.note}
-                              </p>
-                            )}
-                            {parentGoal && (
-                              <p className={cn("text-xs mt-0.5 flex items-center gap-1", isDarkMode ? "text-emerald-500" : "text-emerald-600")}>
-                                <Target className="w-3 h-3 shrink-0" />
-                                {parentGoal.title}
-                              </p>
-                            )}
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-[18px]">
+                  {todaysChecklistItems.map((item) => {
+                    const done = isChecklistItemCompletedToday(item);
+                    return (
+                      <div key={item._id} className="flex items-center gap-[10px]">
+                        <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
+                        <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
+                      </div>
+                    );
+                  })}
+                </div>
+              </>
+            )}
+          </div>
+          {/* Today's schedule */}
+          <div className="rounded-2xl overflow-hidden" style={{ background: "var(--card)", border: "1px solid var(--card-bd)" }}>
+            <div style={{ padding: "22px 24px" }}>
+              <div className="flex items-baseline justify-between mb-3">
+                <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[17px]">Today&apos;s schedule</span>
+                <button onClick={() => setIsCalendarDrawerOpen(true)} className="text-[12px]" style={{ color: "var(--accent)" }}>Open ›</button>
+              </div>
+              {todaysScheduledTasks.length === 0 ? (
+                <div className="pt-1">
+                  <div className="text-[13.5px]" style={{ color: "var(--ink3)" }}>Nothing scheduled today.</div>
+                  <div className="text-[12px] mt-1" style={{ color: "var(--muted)" }}>Add a task with a time, or open the calendar.</div>
+                </div>
+              ) : (
+                <div className="flex flex-col gap-0.5">
+                  {todaysScheduledTasks.map((t) => {
+                    const doFirst = t.quadrant === "urgent-important";
+                    return (
+                      <div key={t._id} className="flex gap-3 cursor-pointer" onClick={() => void openTaskForEdit(t)}>
+                        <span className="text-[11px] w-[52px] text-right pt-0.5 shrink-0" style={{ color: "var(--muted2)" }}>{t.dueDate ? format(new Date(t.dueDate), "h:mm") : ""}</span>
+                        <div className="flex-1 pb-3 pl-[14px] ml-0.5" style={{ borderLeft: `2px solid ${doFirst ? "var(--q-do-first)" : "var(--form-bd)"}` }}>
+                          <div className="flex items-center gap-2">
+                            <span className="text-[13.5px]" style={{ color: "var(--ink)" }}>{t.title}</span>
+                            {doFirst && <span className="text-[10px] px-[7px] py-px rounded-[5px]" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>Do First</span>}
                           </div>
-                          {counts && (
-                            <span className={cn(
-                              "text-xs flex items-center gap-1 mt-1",
-                              counts.done === counts.total
-                                ? "text-emerald-500"
-                                : isDarkMode ? "text-gray-500" : "text-gray-400"
-                            )}>
-                              <CheckCircle2 className="w-3 h-3" />
-                              {counts.done}/{counts.total}
-                            </span>
-                          )}
-                          <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
-                            {isViewingPastPeriod && goal.status === "active" && (
-                              <button
-                                onClick={() => void handleCopyGoalToCurrentPeriod(goal)}
-                                title={goalsPanelPeriodType === "week" ? "Copy to this week" : "Copy to this month"}
-                                className={cn("p-1 rounded text-emerald-500", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-100")}
-                              >
-                                <Copy className="w-3.5 h-3.5" />
-                              </button>
-                            )}
-                            <button
-                              onClick={() => openGoalForEdit(goal)}
-                              title="Edit goal"
-                              className={cn("p-1 rounded", isDarkMode ? "text-gray-400 hover:bg-gray-700" : "text-gray-500 hover:bg-gray-100")}
-                            >
-                              <Edit3 className="w-3.5 h-3.5" />
-                            </button>
-                            <button
-                              onClick={() => void handleSetGoalStatus(goal, goal.status === "dropped" ? "active" : "dropped")}
-                              title={goal.status === "dropped" ? "Restore goal" : "Drop goal"}
-                              className={cn("p-1 rounded", isDarkMode ? "text-gray-400 hover:bg-gray-700" : "text-gray-500 hover:bg-gray-100")}
-                            >
-                              {goal.status === "dropped" ? <Repeat className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
-                            </button>
-                            <button
-                              onClick={() => void handleDeleteGoal(goal._id)}
-                              title="Delete goal"
-                              className="p-1 rounded text-red-400 hover:bg-red-500/20"
-                            >
-                              <Trash2 className="w-3.5 h-3.5" />
-                            </button>
+                          <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>
+                            {t.dueDate ? format(new Date(t.dueDate), "h:mm a") : ""}{t.duration ? ` · ${t.duration} min` : ""}
                           </div>
                         </div>
-                      );
-                    })}
-                  </div>
-                )}
-
-                {/* Add/Edit form */}
-                {showGoalForm ? (
-                  <div className={cn(
-                    "p-3 rounded-lg border space-y-3",
-                    isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
-                  )}>
-                    <input
-                      type="text"
-                      placeholder={goalsPanelPeriodType === "week" ? "What do you want to achieve this week?" : "What do you want to achieve this month?"}
-                      value={goalFormData.title}
-                      onChange={(e) => setGoalFormData(prev => ({ ...prev, title: e.target.value }))}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && goalFormData.title.trim()) {
-                          void (editingGoal ? handleUpdateGoal() : handleAddGoal());
-                        }
-                      }}
-                      autoFocus
-                      className={cn(
-                        "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500",
-                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                      )}
-                    />
-                    <input
-                      type="text"
-                      placeholder="Note (optional)"
-                      value={goalFormData.note}
-                      onChange={(e) => setGoalFormData(prev => ({ ...prev, note: e.target.value }))}
-                      className={cn(
-                        "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500",
-                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                      )}
-                    />
-                    {goalsPanelPeriodType === "week" && parentGoalOptions.length > 0 && (
-                      <div>
-                        <label className={cn("block text-xs mb-1", isDarkMode ? "text-gray-400" : "text-gray-500")}>
-                          Link to monthly goal (optional)
-                        </label>
-                        <select
-                          value={goalFormData.parentGoalId}
-                          onChange={(e) => setGoalFormData(prev => ({ ...prev, parentGoalId: e.target.value }))}
-                          className={cn(
-                            "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500",
-                            isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
-                          )}
-                        >
-                          <option value="">No monthly goal</option>
-                          {parentGoalOptions.map(g => (
-                            <option key={g._id} value={g._id}>{g.title}</option>
-                          ))}
-                        </select>
                       </div>
-                    )}
-                    <div className="flex gap-2">
-                      <button
-                        onClick={resetGoalForm}
-                        className={cn(
-                          "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
-                          isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
-                        )}
-                      >
-                        Cancel
-                      </button>
-                      <button
-                        onClick={editingGoal ? handleUpdateGoal : handleAddGoal}
-                        disabled={!goalFormData.title.trim() || goalsLoading}
-                        className="flex-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
-                      >
-                        {goalsLoading ? "Saving..." : editingGoal ? "Update" : "Add"}
-                      </button>
-                    </div>
-                  </div>
-                ) : (
-                  <button
-                    onClick={() => { resetGoalForm(); setShowGoalForm(true); }}
-                    className={cn(
-                      "flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
-                      isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
-                    )}
-                  >
-                    <Plus className="w-3.5 h-3.5" />
-                    Add goal
-                  </button>
-                )}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
+            </div>
           </div>
         </div>
       </div>
+      {/* Payments load failure — otherwise invisible */}
+      {paymentsError && (
+        <div className="mx-auto max-w-[1320px] px-5 md:px-10 mb-1">
+          <div className="flex items-center gap-2 px-1 text-[12.5px]" style={{ color: "var(--muted)" }}>
+            <AlertCircle className="w-3.5 h-3.5" />
+            Couldn&apos;t load payments
+            <button onClick={() => void fetchPaymentsDue()} className="font-semibold" style={{ color: "var(--accent)" }}>Retry</button>
+          </div>
+        </div>
+      )}
 
       {/* ===== Payments due bar ===== */}
       {paymentsSummary && (
         <div className="mx-auto max-w-[1320px] px-5 md:px-10 mb-1">
           {paymentsSummary.hasDue ? (
-            <div className="flex flex-wrap items-center justify-between gap-x-[22px] gap-y-[14px] rounded-[14px] px-[22px] py-[15px]"
+            <div onClick={() => setPaymentsDrawerOpen(true)}
+              className="flex flex-wrap items-center justify-between gap-x-[22px] gap-y-[14px] rounded-[14px] px-[22px] py-[15px] cursor-pointer"
               style={{ background: "var(--card)", border: "1px solid var(--card-bd)" }}>
               <div className="flex items-center gap-[13px]">
                 <span className="text-[11px] tracking-[0.12em] uppercase" style={{ color: "var(--muted2)" }}>Payments due</span>
@@ -5001,6 +3931,266 @@ export default function HomePage() {
         )}
       </div>
 
+      {/* ===== Calm Editorial drawers ===== */}
+      {(routineDrawerOpen || isGoalsExpanded || paymentsDrawerOpen) && (
+        <div
+          onClick={() => { setRoutineDrawerOpen(false); setIsGoalsExpanded(false); setPaymentsDrawerOpen(false); resetGoalForm(); }}
+          className="fixed inset-0 z-[60]"
+          style={{ background: "var(--overlay)", animation: "fadeIn .2s ease" }}
+        />
+      )}
+
+      {/* Routine drawer */}
+      {routineDrawerOpen && (
+        <div className="fixed top-0 right-0 bottom-0 z-[61] w-[460px] max-w-[94vw] overflow-y-auto"
+          style={{ background: "var(--drawer)", borderLeft: "1px solid var(--drawer-bd)", boxShadow: "-24px 0 60px -30px rgba(70,55,30,0.4)", animation: "drawerIn .28s cubic-bezier(.16,1,.3,1)" }}>
+          <div className="flex items-start justify-between" style={{ padding: "24px 26px 0" }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[24px]">Routines &amp; Maintenance</div>
+              <div className="text-[13px] mt-0.5" style={{ color: "var(--muted)" }}>Recurring items that reset on their own schedule.</div>
+            </div>
+            <button onClick={() => { setRoutineDrawerOpen(false); resetChecklistForm(); resetMaintenanceForm(); }} className="p-1 text-[20px]" style={{ color: "var(--muted)" }}>✕</button>
+          </div>
+          <div className="flex gap-1.5" style={{ padding: "18px 26px 0" }}>
+            {(["today", "all", "maintenance"] as const).map((tab) => (
+              <button key={tab} onClick={() => setChecklistTab(tab)}
+                className="text-[13px] rounded-[9px] capitalize"
+                style={{ padding: "7px 15px", fontWeight: checklistTab === tab ? 600 : 400, color: checklistTab === tab ? "var(--btn-fg)" : "var(--accent)", background: checklistTab === tab ? "var(--pill-active)" : "var(--chip)" }}>
+                {tab}
+              </button>
+            ))}
+          </div>
+
+          {checklistTab !== "maintenance" && (
+            <div style={{ padding: "14px 20px 4px" }} className="flex flex-col">
+              {(checklistTab === "all" ? checklistItems : todaysChecklistItems).length === 0 && (
+                <div className="text-[13.5px] px-2 py-3" style={{ color: "var(--muted)" }}>No routine items yet.</div>
+              )}
+              {(checklistTab === "all" ? checklistItems : todaysChecklistItems).map((item) => {
+                const done = isChecklistItemCompletedToday(item);
+                const badge = item.frequency === "daily" ? "daily" : (item.daysOfWeek?.length ? item.daysOfWeek.map((d) => DAY_LABELS[d]).join(", ") : "weekly");
+                return (
+                  <div key={item._id} className="flex items-center gap-[10px] rounded-[10px]" style={{ padding: "10px 8px" }}>
+                    <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
+                    <span className="flex-1 text-[14px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
+                    <span className="text-[11px] rounded-[6px]" style={{ padding: "2px 9px", color: "var(--muted)", background: "var(--chip)" }}>{badge}</span>
+                    <button onClick={() => openChecklistItemForEdit(item)} style={{ color: "var(--muted2)" }} className="text-[13px] p-0.5"><Edit3 className="w-[15px] h-[15px]" /></button>
+                    <button onClick={() => void handleDeleteChecklistItem(item._id)} style={{ color: "var(--tag-fg)" }} className="p-0.5"><Trash2 className="w-[15px] h-[15px]" /></button>
+                  </div>
+                );
+              })}
+              {showChecklistForm ? (
+                <div className="rounded-[14px] mt-2" style={{ margin: "8px 2px 20px", padding: "18px", background: "var(--form-bg)", border: "1px solid var(--form-bd)" }}>
+                  <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[16px] mb-3">{editingChecklistItem ? "Edit routine item" : "New routine item"}</div>
+                  <input type="text" autoFocus placeholder="e.g. Drink water" value={checklistFormData.title}
+                    onChange={(e) => setChecklistFormData((p) => ({ ...p, title: e.target.value }))}
+                    onKeyDown={(e) => { if (e.key === "Enter" && checklistFormData.title.trim()) void (editingChecklistItem ? handleUpdateChecklistItem() : handleAddChecklistItem()); }}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-3" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                  <div className="flex gap-2 mb-3">
+                    {(["daily", "weekly"] as const).map((f) => (
+                      <button key={f} onClick={() => setChecklistFormData((p) => ({ ...p, frequency: f, daysOfWeek: f === "daily" ? [] : p.daysOfWeek }))}
+                        className="text-[12.5px] rounded-[9px] capitalize" style={{ padding: "7px 16px", fontWeight: checklistFormData.frequency === f ? 600 : 400, color: checklistFormData.frequency === f ? "var(--btn-fg)" : "var(--accent)", background: checklistFormData.frequency === f ? "var(--pill-active)" : "var(--chip)" }}>{f}</button>
+                    ))}
+                  </div>
+                  {checklistFormData.frequency === "weekly" && (
+                    <div className="flex gap-1.5 mb-3">
+                      {DAY_LABELS.map((label, i) => (
+                        <button key={label} onClick={() => setChecklistFormData((p) => ({ ...p, daysOfWeek: p.daysOfWeek.includes(i) ? p.daysOfWeek.filter((d) => d !== i) : [...p.daysOfWeek, i] }))}
+                          className="w-[30px] h-[30px] rounded-[8px] text-[12px] flex items-center justify-center"
+                          style={{ border: "1px solid var(--field-bd)", color: checklistFormData.daysOfWeek.includes(i) ? "var(--btn-fg)" : "var(--muted5)", background: checklistFormData.daysOfWeek.includes(i) ? "var(--pill-active)" : "transparent" }}>{label.charAt(0)}</button>
+                      ))}
+                    </div>
+                  )}
+                  <div className="flex gap-2.5 mt-1">
+                    <button onClick={editingChecklistItem ? handleUpdateChecklistItem : handleAddChecklistItem} disabled={!checklistFormData.title.trim() || checklistLoading}
+                      className="cta text-[13px] font-semibold rounded-[10px] disabled:opacity-50" style={{ padding: "9px 20px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}>{checklistLoading ? "Saving…" : editingChecklistItem ? "Update" : "Add item"}</button>
+                    <button onClick={resetChecklistForm} className="text-[13px]" style={{ padding: "9px 16px", color: "var(--accent)" }}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setShowChecklistForm(true)} className="hovrow text-[13px] text-center rounded-[11px] mt-2" style={{ margin: "8px 2px 20px", padding: "11px", border: "1px dashed var(--check-bd)", color: "var(--muted5)" }}>+ Add a routine item</button>
+              )}
+            </div>
+          )}
+
+          {checklistTab === "maintenance" && (
+            <div style={{ padding: "14px 20px 20px" }} className="flex flex-col gap-2">
+              {maintenanceItems.length === 0 && <div className="text-[13.5px] px-2 py-2" style={{ color: "var(--muted)" }}>No maintenance items yet.</div>}
+              {maintenanceItems.map((m) => (
+                <div key={m._id} className="flex items-center gap-3 rounded-[11px]" style={{ padding: "12px 14px", background: "var(--field)", border: "1px solid var(--field-bd)" }}>
+                  <div className="flex-1">
+                    <div className="text-[14px]" style={{ color: "var(--ink)" }}>{m.title}</div>
+                    <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>every {m.intervalDays} days · due {format(new Date(m.nextDueDate), "MMM d")}</div>
+                  </div>
+                  <button onClick={() => void handleMarkMaintenanceDone(m._id)} className="text-[12px] font-semibold" style={{ color: "var(--accent)" }}>Mark done</button>
+                  <button onClick={() => void handleDeleteMaintenanceItem(m._id)} style={{ color: "var(--tag-fg)" }} className="p-0.5"><Trash2 className="w-[15px] h-[15px]" /></button>
+                </div>
+              ))}
+              {showMaintenanceForm ? (
+                <div className="rounded-[14px]" style={{ padding: "16px", background: "var(--form-bg)", border: "1px solid var(--form-bd)" }}>
+                  <input type="text" autoFocus placeholder="e.g. Replace furnace filter" value={maintenanceFormData.title}
+                    onChange={(e) => setMaintenanceFormData((p) => ({ ...p, title: e.target.value }))}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                  <div className="flex flex-wrap gap-1.5 mb-2.5">
+                    {INTERVAL_PRESETS.map((p) => (
+                      <button key={p.label} onClick={() => setMaintenanceFormData((f) => ({ ...f, intervalDays: p.days }))}
+                        className="text-[12px] rounded-[8px]" style={{ padding: "6px 12px", color: maintenanceFormData.intervalDays === p.days ? "var(--btn-fg)" : "var(--accent)", background: maintenanceFormData.intervalDays === p.days ? "var(--pill-active)" : "var(--chip)" }}>{p.label}</button>
+                    ))}
+                  </div>
+                  <input type="date" value={maintenanceFormData.nextDueDate} onChange={(e) => setMaintenanceFormData((p) => ({ ...p, nextDueDate: e.target.value }))}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-3" style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                  <div className="flex gap-2.5">
+                    <button onClick={editingMaintenanceItem ? handleUpdateMaintenanceItem : handleAddMaintenanceItem} disabled={!maintenanceFormData.title.trim()}
+                      className="cta text-[13px] font-semibold rounded-[10px] disabled:opacity-50" style={{ padding: "9px 20px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}>{editingMaintenanceItem ? "Update" : "Add"}</button>
+                    <button onClick={resetMaintenanceForm} className="text-[13px]" style={{ padding: "9px 16px", color: "var(--accent)" }}>Cancel</button>
+                  </div>
+                </div>
+              ) : (
+                <button onClick={() => setShowMaintenanceForm(true)} className="hovrow text-[13px] text-center rounded-[11px]" style={{ padding: "11px", border: "1px dashed var(--check-bd)", color: "var(--muted5)" }}>+ Add a maintenance item</button>
+              )}
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Goals drawer */}
+      {isGoalsExpanded && (
+        <div className="fixed top-0 right-0 bottom-0 z-[61] w-[460px] max-w-[94vw] overflow-y-auto"
+          style={{ background: "var(--drawer)", borderLeft: "1px solid var(--drawer-bd)", boxShadow: "-24px 0 60px -30px rgba(70,55,30,0.4)", animation: "drawerIn .28s cubic-bezier(.16,1,.3,1)" }}>
+          <div className="flex items-start justify-between" style={{ padding: "24px 26px 0" }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[24px]">Goals</div>
+              <div className="text-[13px] mt-0.5" style={{ color: "var(--muted)" }}>What you want to focus on and achieve.</div>
+            </div>
+            <button onClick={() => { setIsGoalsExpanded(false); resetGoalForm(); }} className="p-1 text-[20px]" style={{ color: "var(--muted)" }}>✕</button>
+          </div>
+          <div className="flex items-center justify-between flex-wrap gap-2" style={{ padding: "18px 26px 0" }}>
+            <div className="inline-flex rounded-[9px] p-0.5" style={{ background: "var(--chip)" }}>
+              {(["week", "month"] as const).map((pt) => (
+                <button key={pt} onClick={() => { setGoalsPanelPeriodType(pt); resetGoalForm(); }}
+                  className="text-[12.5px] rounded-[7px]" style={{ padding: "6px 15px", fontWeight: goalsPanelPeriodType === pt ? 600 : 400, color: goalsPanelPeriodType === pt ? "var(--btn-fg)" : "var(--accent)", background: goalsPanelPeriodType === pt ? "var(--pill-active)" : "transparent" }}>{pt === "week" ? "This week" : "This month"}</button>
+              ))}
+            </div>
+            <div className="flex items-center gap-1">
+              <button onClick={() => navigateGoalsPeriod("prev")} className="navbtn" style={{ width: 30, height: 30 }}><ChevronLeft className="w-4 h-4" /></button>
+              <span className="text-[12px] text-center min-w-[120px]" style={{ color: "var(--ink2)" }}>
+                {goalsPanelPeriodType === "week" ? `${format(startOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")} – ${format(endOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")}` : format(goalsPanelDate, "MMMM yyyy")}
+              </span>
+              <button onClick={() => navigateGoalsPeriod("next")} className="navbtn" style={{ width: 30, height: 30 }}><ChevronRight className="w-4 h-4" /></button>
+            </div>
+          </div>
+          <div style={{ padding: "14px 22px 4px" }} className="flex flex-col gap-1.5">
+            {goalsPanelGoals.length === 0 && !showGoalForm && (
+              <div className="text-center rounded-[12px] text-[13px]" style={{ padding: "20px", border: "1px dashed var(--dash2)", color: "var(--muted)" }}>No goals this {goalsPanelPeriodType}.</div>
+            )}
+            {goalsPanelGoals.map((goal) => {
+              const counts = goalTaskCounts.get(goal._id);
+              const parent = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
+              return (
+                <div key={goal._id} className="flex items-start gap-2.5 rounded-[11px]" style={{ padding: "12px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", opacity: goal.status === "dropped" ? 0.55 : 1 }}>
+                  <span className={cn("qcheck", goal.status === "achieved" && "checked")} style={{ marginTop: 3 }} onClick={() => handleToggleGoalAchieved(goal)} />
+                  <div className="flex-1 min-w-0">
+                    <div className="text-[14px]" style={{ color: "var(--ink)", textDecoration: goal.status !== "active" ? "line-through" : undefined }}>{goal.title}</div>
+                    {goal.note && <div className="text-[12px] mt-0.5" style={{ color: "var(--muted)" }}>{goal.note}</div>}
+                    <div className="flex items-center gap-2 mt-1">
+                      {counts && <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>{counts.done} / {counts.total} tasks</span>}
+                      {parent && <span className="text-[11px]" style={{ color: "var(--accent)" }}>↳ {parent.title}</span>}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 shrink-0">
+                    {isViewingPastPeriod && goal.status === "active" && (
+                      <button onClick={() => void handleCopyGoalToCurrentPeriod(goal)} title="Copy to current" style={{ color: "var(--accent)" }} className="p-0.5"><Copy className="w-[14px] h-[14px]" /></button>
+                    )}
+                    <button onClick={() => openGoalForEdit(goal)} style={{ color: "var(--muted2)" }} className="p-0.5"><Edit3 className="w-[14px] h-[14px]" /></button>
+                    <button onClick={() => void handleSetGoalStatus(goal, goal.status === "dropped" ? "active" : "dropped")} style={{ color: "var(--muted2)" }} className="p-0.5">{goal.status === "dropped" ? <Repeat className="w-[14px] h-[14px]" /> : <X className="w-[14px] h-[14px]" />}</button>
+                    <button onClick={() => void handleDeleteGoal(goal._id)} style={{ color: "var(--tag-fg)" }} className="p-0.5"><Trash2 className="w-[14px] h-[14px]" /></button>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+          <div style={{ padding: "6px 22px 26px" }}>
+            {showGoalForm ? (
+              <div className="rounded-[14px]" style={{ padding: "18px", background: "var(--form-bg)", border: "1px solid var(--form-bd)" }}>
+                <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[16px] mb-3">{editingGoal ? "Edit goal" : "New goal"}</div>
+                <input type="text" autoFocus placeholder={goalsPanelPeriodType === "week" ? "What to achieve this week?" : "What to achieve this month?"} value={goalFormData.title}
+                  onChange={(e) => setGoalFormData((p) => ({ ...p, title: e.target.value }))}
+                  onKeyDown={(e) => { if (e.key === "Enter" && goalFormData.title.trim()) void (editingGoal ? handleUpdateGoal() : handleAddGoal()); }}
+                  className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                <input type="text" placeholder="Why it matters · optional" value={goalFormData.note}
+                  onChange={(e) => setGoalFormData((p) => ({ ...p, note: e.target.value }))}
+                  className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                {goalsPanelPeriodType === "week" && parentGoalOptions.length > 0 && (
+                  <select value={goalFormData.parentGoalId} onChange={(e) => setGoalFormData((p) => ({ ...p, parentGoalId: e.target.value }))}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-3" style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}>
+                    <option value="">Link to a monthly goal (optional)</option>
+                    {parentGoalOptions.map((g) => <option key={g._id} value={g._id}>{g.title}</option>)}
+                  </select>
+                )}
+                <div className="flex gap-2.5">
+                  <button onClick={editingGoal ? handleUpdateGoal : handleAddGoal} disabled={!goalFormData.title.trim() || goalsLoading}
+                    className="cta text-[13px] font-semibold rounded-[10px] disabled:opacity-50" style={{ padding: "9px 20px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}>{goalsLoading ? "Saving…" : editingGoal ? "Update" : "Add goal"}</button>
+                  <button onClick={resetGoalForm} className="text-[13px]" style={{ padding: "9px 16px", color: "var(--accent)" }}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={() => { resetGoalForm(); setShowGoalForm(true); }} className="hovrow w-full text-[13px] text-center rounded-[11px]" style={{ padding: "11px", border: "1px dashed var(--check-bd)", color: "var(--muted5)" }}>+ Add a goal</button>
+            )}
+          </div>
+        </div>
+      )}
+
+      {/* Payments drawer */}
+      {paymentsDrawerOpen && paymentsData?.configured && (
+        <div className="fixed top-0 right-0 bottom-0 z-[61] w-[460px] max-w-[94vw] overflow-y-auto"
+          style={{ background: "var(--drawer)", borderLeft: "1px solid var(--drawer-bd)", boxShadow: "-24px 0 60px -30px rgba(70,55,30,0.4)", animation: "drawerIn .28s cubic-bezier(.16,1,.3,1)" }}>
+          <div className="flex items-start justify-between" style={{ padding: "24px 26px 0" }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[24px]">Payments due</div>
+              <div className="text-[13px] mt-0.5" style={{ color: "var(--muted)" }}>{format(new Date(), "EEEE, MMMM d")}</div>
+            </div>
+            <button onClick={() => setPaymentsDrawerOpen(false)} className="p-1 text-[20px]" style={{ color: "var(--muted)" }}>✕</button>
+          </div>
+          <div style={{ padding: "18px 22px 26px" }} className="flex flex-col gap-2">
+            {[...(paymentsData.accounts ?? []).map((a) => ({ id: a.id, name: a.shortName, total: a.total, items: a.items })),
+              ...((paymentsData.budgets ?? []).length > 0 ? [{ id: "budgets", name: "Other payments", total: (paymentsData.budgets ?? []).reduce((s, b) => s + b.amount, 0), items: paymentsData.budgets ?? [] }] : [])
+            ].map((row) => {
+              const isPaid = paidPaymentAccounts.has(row.id);
+              const isExpanded = expandedPaymentAccounts.has(row.id);
+              return (
+                <div key={row.id} className="rounded-[11px]" style={{ background: "var(--field)", border: "1px solid var(--field-bd)" }}>
+                  <div className="flex items-center gap-3" style={{ padding: "12px 14px" }}>
+                    <span className={cn("qcheck", isPaid && "checked")} onClick={() => togglePaymentAccountPaid(row.id)} />
+                    <button className="flex-1 text-left" onClick={() => togglePaymentAccountExpanded(row.id)}>
+                      <div className="text-[14px]" style={{ color: "var(--ink)", textDecoration: isPaid ? "line-through" : undefined }}>{row.name}</div>
+                      <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>{row.items.length} item{row.items.length === 1 ? "" : "s"}</div>
+                    </button>
+                    <span className="text-[14px] font-semibold" style={{ color: "var(--ink)" }}>{fmtMoney(row.total)}</span>
+                  </div>
+                  {isExpanded && (
+                    <div style={{ padding: "0 14px 12px 40px" }} className="flex flex-col gap-1.5">
+                      {row.items.map((it, idx) => (
+                        <div key={idx} className="flex items-center justify-between text-[12.5px]">
+                          <span style={{ color: "var(--ink3)" }}>{it.label}</span>
+                          <span style={{ color: "var(--muted)" }}>{fmtMoney(it.amount)}</span>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              );
+            })}
+            <div className="flex items-center justify-between mt-2 pt-3 text-[13px]" style={{ borderTop: "1px solid var(--line2)" }}>
+              <span style={{ color: "var(--muted)" }}>Income</span>
+              <span style={{ color: "var(--ink3)" }}>{fmtMoney(paymentsData.totalIncome ?? 0)}</span>
+            </div>
+            <div className="flex items-center justify-between text-[13px]">
+              <span style={{ color: "var(--muted)" }}>Day ends</span>
+              <span className="font-semibold" style={{ color: (paymentsData.finalBalance ?? 0) >= 0 ? "#16a34a" : "var(--tag-fg)" }}>{(paymentsData.finalBalance ?? 0) >= 0 ? "+" : "−"}{fmtMoney(paymentsData.finalBalance ?? 0)}</span>
+            </div>
+          </div>
+        </div>
+      )}
       {/* Floating Action Button */}
       <button
         onClick={() => openModalForQuadrant("urgent-important")}
