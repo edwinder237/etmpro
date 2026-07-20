@@ -919,6 +919,26 @@ export default function HomePage() {
     .filter(t => t.dueDate && isSameDay(new Date(t.dueDate), new Date()))
     .sort((a, b) => new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime());
 
+  // Combined Today's schedule: in-app timed tasks + today's iCal calendar events
+  // (calendarGroups is fetched on mount with today's bounds, across all feeds).
+  const todaysCalendarEvents = calendarGroups.flatMap(g =>
+    g.events.map(e => ({ ...e, calendar: g.name }))
+  );
+  const calendarFeedError = calendarGroups.some(g => g.error);
+  type ScheduleItem =
+    | { kind: "task"; id: string; time: number; task: Task }
+    | { kind: "event"; id: string; time: number; event: PlanningEvent };
+  const todaysScheduleItems: ScheduleItem[] = [
+    ...todaysScheduledTasks.map(t => ({
+      kind: "task" as const, id: t._id,
+      time: t.dueDate ? new Date(t.dueDate).getTime() : 0, task: t,
+    })),
+    ...todaysCalendarEvents.map(e => ({
+      kind: "event" as const, id: e.id,
+      time: new Date(e.start).getTime(), event: e,
+    })),
+  ].sort((a, b) => a.time - b.time);
+
   const handleToggleChecklistItem = async (id: string) => {
     // Optimistic update
     setChecklistItems(prev =>
@@ -3006,30 +3026,53 @@ export default function HomePage() {
                 <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[17px]">Today&apos;s schedule</span>
                 <button onClick={() => setIsCalendarDrawerOpen(true)} className="text-[12px]" style={{ color: "var(--accent)" }}>Open ›</button>
               </div>
-              {todaysScheduledTasks.length === 0 ? (
+              {todaysScheduleItems.length === 0 ? (
                 <div className="pt-1">
                   <div className="text-[13.5px]" style={{ color: "var(--ink3)" }}>Nothing scheduled today.</div>
-                  <div className="text-[12px] mt-1" style={{ color: "var(--muted)" }}>Add a task with a time, or open the calendar.</div>
+                  <div className="text-[12px] mt-1" style={{ color: "var(--muted)" }}>Add a task with a time, or connect a calendar in settings.</div>
                 </div>
               ) : (
                 <div className="flex flex-col gap-0.5">
-                  {todaysScheduledTasks.map((t) => {
-                    const doFirst = t.quadrant === "urgent-important";
-                    return (
-                      <div key={t._id} className="flex gap-3 cursor-pointer" onClick={() => void openTaskForEdit(t)}>
-                        <span className="text-[11px] w-[52px] text-right pt-0.5 shrink-0" style={{ color: "var(--muted2)" }}>{t.dueDate ? format(new Date(t.dueDate), "h:mm") : ""}</span>
-                        <div className="flex-1 pb-3 pl-[14px] ml-0.5" style={{ borderLeft: `2px solid ${doFirst ? "var(--q-do-first)" : "var(--form-bd)"}` }}>
-                          <div className="flex items-center gap-2">
-                            <span className="text-[13.5px]" style={{ color: "var(--ink)" }}>{t.title}</span>
-                            {doFirst && <span className="text-[10px] px-[7px] py-px rounded-[5px]" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>Do First</span>}
+                  {todaysScheduleItems.map((item) => {
+                    if (item.kind === "task") {
+                      const t = item.task;
+                      const doFirst = t.quadrant === "urgent-important";
+                      return (
+                        <div key={`task-${t._id}`} className="flex gap-3 cursor-pointer" onClick={() => void openTaskForEdit(t)}>
+                          <span className="text-[11px] w-[52px] text-right pt-0.5 shrink-0" style={{ color: "var(--muted2)" }}>{t.dueDate ? format(new Date(t.dueDate), "h:mm") : ""}</span>
+                          <div className="flex-1 pb-3 pl-[14px] ml-0.5" style={{ borderLeft: `2px solid ${doFirst ? "var(--q-do-first)" : "var(--form-bd)"}` }}>
+                            <div className="flex items-center gap-2">
+                              <span className="text-[13.5px]" style={{ color: "var(--ink)" }}>{t.title}</span>
+                              {doFirst && <span className="text-[10px] px-[7px] py-px rounded-[5px]" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>Do First</span>}
+                            </div>
+                            <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>
+                              {t.dueDate ? format(new Date(t.dueDate), "h:mm a") : ""}{t.duration ? ` · ${t.duration} min` : ""}
+                            </div>
                           </div>
+                        </div>
+                      );
+                    }
+                    const ev = item.event;
+                    return (
+                      <div key={`event-${ev.id}`} className="flex gap-3">
+                        <span className="text-[11px] w-[52px] text-right pt-0.5 shrink-0" style={{ color: "var(--muted2)" }}>
+                          {ev.allDay ? "all day" : format(new Date(ev.start), "h:mm")}
+                        </span>
+                        <div className="flex-1 pb-3 pl-[14px] ml-0.5" style={{ borderLeft: "2px solid var(--form-bd)" }}>
+                          <div className="text-[13.5px]" style={{ color: "var(--ink2)" }}>{ev.title}</div>
                           <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>
-                            {t.dueDate ? format(new Date(t.dueDate), "h:mm a") : ""}{t.duration ? ` · ${t.duration} min` : ""}
+                            {ev.allDay ? ev.calendar : `${format(new Date(ev.start), "h:mm a")} · ${ev.calendar}`}
                           </div>
                         </div>
                       </div>
                     );
                   })}
+                  {calendarFeedError && (
+                    <div className="flex items-center gap-1.5 pt-1 text-[11.5px]" style={{ color: "var(--muted)" }}>
+                      <AlertCircle className="w-3 h-3" />
+                      A calendar feed couldn&apos;t be loaded — check its URL in settings.
+                    </div>
+                  )}
                 </div>
               )}
             </div>
