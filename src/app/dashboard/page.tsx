@@ -3227,8 +3227,12 @@ export default function HomePage() {
                           <span className="text-[11px] tracking-[0.1em] uppercase" style={{ color: "var(--muted3)" }}>{meta.nextLabel}</span>
                           <div className="text-[17px] font-semibold mt-[3px]" style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
                             {nextAction.title}
-                            {isTaskOverdue(nextAction) && nextAction.dueDate && (
-                              <span className="text-[12px] font-normal" style={{ color: "var(--tag-fg)" }}> · overdue {format(new Date(nextAction.dueDate), "MMM d")}</span>
+                            {nextAction.dueDate && nextAction.status !== "completed" && (
+                              isTaskOverdue(nextAction) ? (
+                                <span className="text-[12px] font-normal" style={{ color: "var(--tag-fg)" }}> · overdue {format(new Date(nextAction.dueDate), "MMM d")}</span>
+                              ) : (
+                                <span className="text-[12px] font-normal" style={{ color: "var(--muted3)" }}> · {format(new Date(nextAction.dueDate), "MMM d")}</span>
+                              )
                             )}
                           </div>
                         </div>
@@ -3239,10 +3243,16 @@ export default function HomePage() {
                               {upNext.map((t) => (
                                 <div key={t._id} className="flex items-center gap-[11px]">
                                   <span className={cn("qcheck", t.status === "completed" && "checked")} onClick={() => void handleToggleComplete(t)} />
-                                  <span className="text-[14px] cursor-pointer" onClick={() => void openTaskForEdit(t)}
+                                  <span className="text-[14px] cursor-pointer flex-1 min-w-0 truncate" onClick={() => void openTaskForEdit(t)}
                                     style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
                                     {t.title}
                                   </span>
+                                  {t.dueDate && t.status !== "completed" && (
+                                    <span className="text-[12px] font-normal shrink-0 tabular-nums"
+                                      style={{ color: isTaskOverdue(t) ? "var(--tag-fg)" : "var(--muted3)" }}>
+                                      {format(new Date(t.dueDate), "MMM d")}
+                                    </span>
+                                  )}
                                 </div>
                               ))}
                             </div>
