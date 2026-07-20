@@ -1,5 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { tasksCollection } from "~/server/db";
+import { tasksCollection, goalsCollection } from "~/server/db";
 import type { Task, TaskQuadrant, TaskPriority, TaskStatus } from "~/server/db/schema";
 import { ObjectId } from "mongodb";
 import { auth } from "@clerk/nextjs/server";
@@ -24,6 +24,7 @@ const createTaskSchema = z.object({
   dueDate: z.string().datetime().optional(),
   duration: z.number().int().min(1).max(1440).optional(),
   parentTaskId: z.string().optional(),  // For subtask creation
+  goalId: z.string().optional(),        // Optional link to a weekly/monthly goal
 });
 
 const updateTaskSchema = z.object({
@@ -35,6 +36,7 @@ const updateTaskSchema = z.object({
   status: taskStatusSchema.optional(),
   dueDate: z.string().datetime().nullable().optional(),
   duration: z.number().int().min(1).max(1440).nullable().optional(),
+  goalId: z.string().nullable().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -171,6 +173,25 @@ export async function POST(request: NextRequest) {
       parentTaskId = new ObjectId(body.parentTaskId);
     }
 
+    // Verify goal ownership when linking to a goal
+    let goalId: ObjectId | undefined;
+    if (body.goalId) {
+      if (!ObjectId.isValid(body.goalId)) {
+        return NextResponse.json({ error: "Invalid goal ID" }, { status: 400 });
+      }
+
+      const goal = await goalsCollection.findOne({
+        _id: new ObjectId(body.goalId),
+        userId,
+      });
+
+      if (!goal) {
+        return NextResponse.json({ error: "Goal not found" }, { status: 400 });
+      }
+
+      goalId = new ObjectId(body.goalId);
+    }
+
     const newTask: Task = {
       title: body.title,
       description: body.description,
@@ -180,6 +201,7 @@ export async function POST(request: NextRequest) {
       dueDate: body.dueDate ? new Date(body.dueDate) : undefined,
       duration: body.duration,
       parentTaskId,
+      goalId,
       createdAt: new Date(),
       updatedAt: new Date(),
       userId,
@@ -212,7 +234,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, dueDate, duration, ...restUpdateData } = parseResult.data;
+    const { _id, dueDate, duration, goalId, ...restUpdateData } = parseResult.data;
 
     // Validate ObjectId format
     if (!ObjectId.isValid(_id)) {
@@ -239,6 +261,23 @@ export async function PUT(request: NextRequest) {
       updateOperation.$unset = { ...updateOperation.$unset, duration: "" as const };
     } else if (duration !== undefined) {
       updateOperation.$set.duration = duration;
+    }
+
+    // Handle goalId - if null, unset it; if string, verify ownership and set
+    if (goalId === null) {
+      updateOperation.$unset = { ...updateOperation.$unset, goalId: "" as const };
+    } else if (goalId !== undefined) {
+      if (!ObjectId.isValid(goalId)) {
+        return NextResponse.json({ error: "Invalid goal ID" }, { status: 400 });
+      }
+
+      const goal = await goalsCollection.findOne({ _id: new ObjectId(goalId), userId });
+
+      if (!goal) {
+        return NextResponse.json({ error: "Goal not found" }, { status: 400 });
+      }
+
+      updateOperation.$set.goalId = new ObjectId(goalId);
     }
 
     const result = await tasksCollection.updateOne(

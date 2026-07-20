@@ -18,6 +18,23 @@ export interface Task {
   updatedAt: Date;
   userId?: string;
   parentTaskId?: ObjectId;  // References parent task if this is a subtask
+  goalId?: ObjectId;        // Optional link to a weekly/monthly goal
+}
+
+export type GoalPeriodType = "week" | "month";
+export type GoalStatus = "active" | "achieved" | "dropped";
+
+export interface Goal {
+  _id?: ObjectId;
+  title: string;
+  note?: string;
+  periodType: GoalPeriodType;
+  periodKey: string;        // week: Sunday start date "YYYY-MM-DD"; month: "YYYY-MM"
+  status: GoalStatus;
+  parentGoalId?: ObjectId;  // weekly goal → monthly goal link
+  userId: string;
+  createdAt: Date;
+  updatedAt: Date;
 }
 
 export type ChecklistFrequency = "daily" | "weekly";
@@ -56,6 +73,7 @@ export interface UserSettings {
 
 export const collections = {
   tasks: "tasks",
+  goals: "goals",
   checklistItems: "checklistItems",
   maintenanceItems: "maintenanceItems",
   userSettings: "userSettings",

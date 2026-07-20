@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo } from "react";
 import {
   Search,
   Sun,
@@ -38,7 +38,9 @@ import {
   CloudLightning,
   MapPin,
   Loader2,
-  GripVertical
+  GripVertical,
+  Target,
+  Copy
 } from "lucide-react";
 import {
   DndContext,
@@ -103,8 +105,24 @@ interface Task {
   createdAt: string;
   updatedAt: string;
   parentTaskId?: string;
+  goalId?: string;
   subtaskCount?: number;
   subtaskCompletedCount?: number;
+}
+
+type GoalPeriodType = "week" | "month";
+type GoalStatus = "active" | "achieved" | "dropped";
+
+interface Goal {
+  _id: string;
+  title: string;
+  note?: string;
+  periodType: GoalPeriodType;
+  periodKey: string;
+  status: GoalStatus;
+  parentGoalId?: string;
+  createdAt: string;
+  updatedAt: string;
 }
 
 
@@ -406,6 +424,7 @@ export default function HomePage() {
     dueDate: string;
     dueTime: string;
     duration: number | "";
+    goalId: string;
   }>({
     title: "",
     description: "",
@@ -413,7 +432,8 @@ export default function HomePage() {
     priority: "medium",
     dueDate: "",
     dueTime: "12:00",
-    duration: ""
+    duration: "",
+    goalId: ""
   });
   const [quickTaskInputs, setQuickTaskInputs] = useState<Record<TaskQuadrant, string>>({
     "urgent-important": "",
@@ -436,6 +456,7 @@ export default function HomePage() {
     quadrant: "urgent-important" as TaskQuadrant,
     priority: "medium" as TaskPriority,
     date: new Date(),
+    goalId: "",
   });
 
   // Stats drawer state
@@ -500,6 +521,16 @@ export default function HomePage() {
     daysOfWeek: [] as number[],
   });
 
+  // Goals state
+  const [goals, setGoals] = useState<Goal[]>([]);
+  const [goalsLoading, setGoalsLoading] = useState(false);
+  const [isGoalsExpanded, setIsGoalsExpanded] = useState(false);
+  const [goalsPanelPeriodType, setGoalsPanelPeriodType] = useState<GoalPeriodType>("week");
+  const [goalsPanelDate, setGoalsPanelDate] = useState(new Date());
+  const [showGoalForm, setShowGoalForm] = useState(false);
+  const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
+  const [goalFormData, setGoalFormData] = useState({ title: "", note: "", parentGoalId: "" });
+
   // Subtask state (for edit modal)
   const [subtasks, setSubtasks] = useState<Task[]>([]);
   const [newSubtaskTitle, setNewSubtaskTitle] = useState("");
@@ -524,6 +555,7 @@ export default function HomePage() {
       quadrant: task.quadrant,
       priority: task.priority,
       date: taskDate,
+      goalId: task.goalId ?? "",
     });
     setIsCalendarTaskModalOpen(true);
   };
@@ -538,6 +570,7 @@ export default function HomePage() {
       quadrant: "important-not-urgent",
       priority: "medium",
       date: selectedDate,
+      goalId: "",
     });
     setIsCalendarTaskModalOpen(true);
   };
@@ -580,6 +613,7 @@ export default function HomePage() {
             priority: calendarTaskForm.priority,
             dueDate: fullDateTime.toISOString(),
             duration: calendarTaskForm.duration,
+            goalId: calendarTaskForm.goalId || null,
           })
         });
 
@@ -604,6 +638,7 @@ export default function HomePage() {
             priority: calendarTaskForm.priority,
             dueDate: fullDateTime.toISOString(),
             duration: calendarTaskForm.duration,
+            goalId: calendarTaskForm.goalId || undefined,
           })
         });
 
@@ -777,6 +812,7 @@ export default function HomePage() {
 
   useEffect(() => {
     void fetchTasks();
+    void fetchGoals();
     void fetchChecklistItems();
     void fetchMaintenanceItems();
     void fetchPaymentsDue();
@@ -1353,6 +1389,315 @@ export default function HomePage() {
     setShowMaintenanceForm(false);
   };
 
+  // Goals functions
+  const weekKeyOf = (d: Date) => format(startOfWeek(d, { weekStartsOn: 0 }), "yyyy-MM-dd");
+  const monthKeyOf = (d: Date) => format(d, "yyyy-MM");
+  const currentWeekKey = weekKeyOf(new Date());
+  const currentMonthKey = monthKeyOf(new Date());
+  const goalsPanelKey = goalsPanelPeriodType === "week" ? weekKeyOf(goalsPanelDate) : monthKeyOf(goalsPanelDate);
+  const goalsPanelCurrentKey = goalsPanelPeriodType === "week" ? currentWeekKey : currentMonthKey;
+  const isViewingPastPeriod = goalsPanelKey < goalsPanelCurrentKey;
+  const isViewingCurrentPeriod = goalsPanelKey === goalsPanelCurrentKey;
+
+  const currentWeekGoals = goals.filter(g => g.periodType === "week" && g.periodKey === currentWeekKey);
+  const currentMonthGoals = goals.filter(g => g.periodType === "month" && g.periodKey === currentMonthKey);
+  const goalsPanelGoals = goals.filter(g => g.periodType === goalsPanelPeriodType && g.periodKey === goalsPanelKey);
+
+  const goalsById = useMemo(() => new Map(goals.map(g => [g._id, g])), [goals]);
+
+  const goalTaskCounts = useMemo(() => {
+    const counts = new Map<string, { done: number; total: number }>();
+    for (const task of tasks) {
+      if (!task.goalId) continue;
+      const entry = counts.get(task.goalId) ?? { done: 0, total: 0 };
+      entry.total += 1;
+      if (task.status === "completed") entry.done += 1;
+      counts.set(task.goalId, entry);
+    }
+    return counts;
+  }, [tasks]);
+
+  // Active month goals selectable as parent for the week being viewed in the panel
+  const parentGoalOptions = (() => {
+    if (goalsPanelPeriodType !== "week") return [];
+    const monthKey = goalsPanelKey.slice(0, 7);
+    const options = goals.filter(g => g.periodType === "month" && g.periodKey === monthKey && g.status === "active");
+    // Keep the currently-linked parent selectable when editing, even if achieved/dropped/other month
+    if (editingGoal?.parentGoalId && !options.some(g => g._id === editingGoal.parentGoalId)) {
+      const linked = goalsById.get(editingGoal.parentGoalId);
+      if (linked) return [linked, ...options];
+    }
+    return options;
+  })();
+
+  const fetchGoals = async () => {
+    try {
+      const response = await fetch("/api/goals");
+      if (response.ok) {
+        const data = await response.json() as Goal[];
+        setGoals(data);
+      }
+    } catch {
+      // Silently fail
+    }
+  };
+
+  const resetGoalForm = () => {
+    setGoalFormData({ title: "", note: "", parentGoalId: "" });
+    setEditingGoal(null);
+    setShowGoalForm(false);
+  };
+
+  const handleAddGoal = async () => {
+    if (!goalFormData.title.trim()) return;
+    setGoalsLoading(true);
+    try {
+      const response = await fetch("/api/goals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: goalFormData.title.trim(),
+          note: goalFormData.note.trim() || undefined,
+          periodType: goalsPanelPeriodType,
+          periodKey: goalsPanelKey,
+          parentGoalId: goalsPanelPeriodType === "week" ? (goalFormData.parentGoalId || undefined) : undefined,
+        }),
+      });
+      if (response.ok) {
+        const newGoal = await response.json() as Goal;
+        setGoals(prev => [...prev, newGoal]);
+        resetGoalForm();
+        toast.success("Goal added");
+      } else {
+        toast.error("Failed to add goal");
+      }
+    } catch {
+      toast.error("Failed to add goal");
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const handleUpdateGoal = async () => {
+    if (!editingGoal || !goalFormData.title.trim()) return;
+    setGoalsLoading(true);
+    try {
+      const response = await fetch("/api/goals", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          _id: editingGoal._id,
+          title: goalFormData.title.trim(),
+          note: goalFormData.note.trim() || null,
+          ...(editingGoal.periodType === "week"
+            ? { parentGoalId: goalFormData.parentGoalId || null }
+            : {}),
+        }),
+      });
+      if (response.ok) {
+        const updated = await response.json() as Goal;
+        setGoals(prev => prev.map(g => g._id === updated._id ? updated : g));
+        resetGoalForm();
+        toast.success("Goal updated");
+      } else {
+        toast.error("Failed to update goal");
+      }
+    } catch {
+      toast.error("Failed to update goal");
+    } finally {
+      setGoalsLoading(false);
+    }
+  };
+
+  const handleSetGoalStatus = async (goal: Goal, status: GoalStatus) => {
+    // Optimistic update
+    setGoals(prev => prev.map(g => g._id === goal._id ? { ...g, status } : g));
+    if (status === "achieved") {
+      playCompletionSound();
+    } else if (goal.status === "achieved") {
+      playUncompleteSound();
+    }
+    try {
+      const response = await fetch("/api/goals", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: goal._id, status }),
+      });
+      if (!response.ok) void fetchGoals();
+    } catch {
+      void fetchGoals();
+    }
+  };
+
+  const handleToggleGoalAchieved = (goal: Goal) => {
+    void handleSetGoalStatus(goal, goal.status === "achieved" ? "active" : "achieved");
+  };
+
+  const handleDeleteGoal = async (id: string) => {
+    // Optimistic: mirror the server-side cascade locally
+    setGoals(prev => prev
+      .filter(g => g._id !== id)
+      .map(g => g.parentGoalId === id ? { ...g, parentGoalId: undefined } : g)
+    );
+    setTasks(prev => prev.map(t => t.goalId === id ? { ...t, goalId: undefined } : t));
+    if (editingGoal?._id === id) resetGoalForm();
+    try {
+      const response = await fetch(`/api/goals?id=${id}`, { method: "DELETE" });
+      if (!response.ok) {
+        void fetchGoals();
+        void fetchTasks();
+        toast.error("Failed to delete goal");
+      }
+    } catch {
+      void fetchGoals();
+      void fetchTasks();
+      toast.error("Failed to delete goal");
+    }
+  };
+
+  const handleCopyGoalToCurrentPeriod = async (goal: Goal) => {
+    const targetKey = goal.periodType === "week" ? currentWeekKey : currentMonthKey;
+    // Keep the monthly link only if the parent goal belongs to the current month
+    const parent = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
+    const keepParent = parent && parent.periodKey === currentMonthKey;
+    try {
+      const response = await fetch("/api/goals", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          title: goal.title,
+          note: goal.note,
+          periodType: goal.periodType,
+          periodKey: targetKey,
+          parentGoalId: keepParent ? goal.parentGoalId : undefined,
+        }),
+      });
+      if (response.ok) {
+        const newGoal = await response.json() as Goal;
+        setGoals(prev => [...prev, newGoal]);
+        toast.success(goal.periodType === "week" ? "Copied to this week" : "Copied to this month");
+      } else {
+        toast.error("Failed to copy goal");
+      }
+    } catch {
+      toast.error("Failed to copy goal");
+    }
+  };
+
+  const openGoalForEdit = (goal: Goal) => {
+    setEditingGoal(goal);
+    setGoalFormData({
+      title: goal.title,
+      note: goal.note ?? "",
+      parentGoalId: goal.parentGoalId ?? "",
+    });
+    setShowGoalForm(true);
+  };
+
+  const navigateGoalsPeriod = (direction: "prev" | "next") => {
+    resetGoalForm();
+    setGoalsPanelDate(d => {
+      if (goalsPanelPeriodType === "week") {
+        return direction === "prev" ? subWeeks(d, 1) : addWeeks(d, 1);
+      }
+      return direction === "prev" ? subMonths(d, 1) : addMonths(d, 1);
+    });
+  };
+
+  const openGoalsPanelWithForm = (periodType: GoalPeriodType) => {
+    setGoalsPanelPeriodType(periodType);
+    setGoalsPanelDate(new Date());
+    setIsGoalsExpanded(true);
+    resetGoalForm();
+    setShowGoalForm(true);
+  };
+
+  // Compact goal row used in the "This Week / This Month" strip
+  const renderGoalStripRow = (goal: Goal) => {
+    const counts = goalTaskCounts.get(goal._id);
+    return (
+      <div key={goal._id} className="flex items-start gap-2 py-1">
+        <button
+          onClick={() => handleToggleGoalAchieved(goal)}
+          className={cn(
+            "mt-0.5 rounded-full transition-colors",
+            goal.status === "achieved"
+              ? "text-emerald-500"
+              : isDarkMode ? "text-gray-400 hover:text-gray-300" : "text-gray-500 hover:text-gray-600"
+          )}
+        >
+          {goal.status === "achieved" ? (
+            <CheckCircle2 className="w-4 h-4" />
+          ) : (
+            <div className="w-4 h-4 rounded-full border-2 border-current" />
+          )}
+        </button>
+        <span className={cn(
+          "flex-1 text-sm",
+          goal.status === "achieved" && "line-through opacity-60"
+        )}>
+          {goal.title}
+        </span>
+        {counts && (
+          <span className={cn(
+            "text-xs flex items-center gap-1 mt-0.5",
+            counts.done === counts.total
+              ? "text-emerald-500"
+              : isDarkMode ? "text-gray-500" : "text-gray-400"
+          )}>
+            <CheckCircle2 className="w-3 h-3" />
+            {counts.done}/{counts.total}
+          </span>
+        )}
+      </div>
+    );
+  };
+
+  // Label for a goal option in the task-form selects, with period context for stale goals
+  const goalOptionLabel = (goal: Goal) => {
+    if (goal.periodType === "week" && goal.periodKey === currentWeekKey) return goal.title;
+    if (goal.periodType === "month" && goal.periodKey === currentMonthKey) return goal.title;
+    if (goal.periodType === "week") {
+      const [y = 0, m = 1, d = 1] = goal.periodKey.split("-").map(Number);
+      return `${goal.title} (week of ${format(new Date(y, m - 1, d), "MMM d")})`;
+    }
+    const [y = 0, m = 1] = goal.periodKey.split("-").map(Number);
+    return `${goal.title} (${format(new Date(y, m - 1, 1), "MMMM yyyy")})`;
+  };
+
+  // Options for the "Goal (optional)" select in both task forms. Active goals of the
+  // current periods are always offered; a linked goal outside those (past period,
+  // achieved/dropped) stays selectable so editing never silently drops the link.
+  const renderGoalSelectOptions = (selectedGoalId: string) => {
+    const weekOptions = currentWeekGoals.filter(g => g.status === "active");
+    const monthOptions = currentMonthGoals.filter(g => g.status === "active");
+    const selected = selectedGoalId ? goalsById.get(selectedGoalId) : undefined;
+    const selectedIsListed = !!selected &&
+      (weekOptions.some(g => g._id === selected._id) || monthOptions.some(g => g._id === selected._id));
+    return (
+      <>
+        <option value="">No goal</option>
+        {selected && !selectedIsListed && (
+          <option value={selected._id}>{goalOptionLabel(selected)}</option>
+        )}
+        {weekOptions.length > 0 && (
+          <optgroup label="This Week">
+            {weekOptions.map(g => (
+              <option key={g._id} value={g._id}>{g.title}</option>
+            ))}
+          </optgroup>
+        )}
+        {monthOptions.length > 0 && (
+          <optgroup label="This Month">
+            {monthOptions.map(g => (
+              <option key={g._id} value={g._id}>{g.title}</option>
+            ))}
+          </optgroup>
+        )}
+      </>
+    );
+  };
+
   // Payments due (external finance API, grouped by account)
   const fetchPaymentsDue = async () => {
     try {
@@ -1471,7 +1816,8 @@ export default function HomePage() {
           quadrant: formData.quadrant,
           priority: formData.quadrant === "urgent-important" ? "high" : formData.priority,
           dueDate: dueDateValue,
-          duration: formData.duration || undefined
+          duration: formData.duration || undefined,
+          goalId: formData.goalId || undefined
         })
       });
 
@@ -1564,7 +1910,8 @@ export default function HomePage() {
           quadrant: formData.quadrant,
           priority: formData.quadrant === "urgent-important" ? "high" : formData.priority,
           dueDate: dueDateValue,
-          duration: formData.duration || null
+          duration: formData.duration || null,
+          goalId: formData.goalId || null
         })
       });
 
@@ -1926,7 +2273,8 @@ export default function HomePage() {
       priority: "medium",
       dueDate: "",
       dueTime: "12:00",
-      duration: ""
+      duration: "",
+      goalId: ""
     });
     setEditingTask(null);
   };
@@ -1948,7 +2296,8 @@ export default function HomePage() {
       priority: quadrant === "urgent-important" ? "high" : "medium",
       dueDate: "",
       dueTime: "12:00",
-      duration: ""
+      duration: "",
+      goalId: ""
     });
     setIsModalOpen(true);
   };
@@ -1963,7 +2312,8 @@ export default function HomePage() {
       priority: task.priority,
       dueDate: taskDate ? format(taskDate, "yyyy-MM-dd") : "",
       dueTime: taskDate ? format(taskDate, "HH:mm") : "12:00",
-      duration: task.duration ?? ""
+      duration: task.duration ?? "",
+      goalId: task.goalId ?? ""
     });
     setIsModalOpen(true);
 
@@ -3228,6 +3578,27 @@ export default function HomePage() {
                   <option value="low">Low Priority</option>
                 </select>
               </div>
+
+              {/* Goal */}
+              {(goals.length > 0 || calendarTaskForm.goalId) && (
+                <div>
+                  <label className={cn("block text-sm font-medium mb-2", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    Goal (optional)
+                  </label>
+                  <select
+                    value={calendarTaskForm.goalId}
+                    onChange={(e) => setCalendarTaskForm(prev => ({ ...prev, goalId: e.target.value }))}
+                    className={cn(
+                      "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      darkMode
+                        ? "bg-gray-800 border-gray-700 text-white"
+                        : "bg-white border-gray-300 text-gray-900"
+                    )}
+                  >
+                    {renderGoalSelectOptions(calendarTaskForm.goalId)}
+                  </select>
+                </div>
+              )}
             </div>
 
             {/* Action Buttons */}
@@ -4090,6 +4461,328 @@ export default function HomePage() {
         </div>{/* end grid */}
       </div>
 
+      {/* Goals — weekly & monthly focus */}
+      <div className="px-4 md:px-6 pb-4 md:pb-6">
+        <div className={cn("rounded-lg", isDarkMode ? "bg-gray-900" : "bg-white border border-gray-200")}>
+
+          {/* Header */}
+          <button
+            onClick={() => { setIsGoalsExpanded(!isGoalsExpanded); resetGoalForm(); }}
+            className={cn(
+              "w-full flex items-center justify-between p-3 md:p-4 rounded-t-lg",
+              isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50"
+            )}
+          >
+            <div className="flex items-center gap-3">
+              <div className="p-1.5 rounded-lg bg-emerald-600/20">
+                <Target className="w-4 h-4 text-emerald-500" />
+              </div>
+              <h2 className="font-semibold text-sm md:text-base">Goals</h2>
+            </div>
+            <div className="flex items-center gap-3">
+              {(currentWeekGoals.length > 0 || currentMonthGoals.length > 0) && (
+                <span className={cn("text-xs font-medium", isDarkMode ? "text-gray-400" : "text-gray-500")}>
+                  {[...currentWeekGoals, ...currentMonthGoals].filter(g => g.status === "achieved").length}
+                  /{currentWeekGoals.length + currentMonthGoals.length} achieved
+                </span>
+              )}
+              {isGoalsExpanded ? (
+                <ChevronUp className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
+              ) : (
+                <ChevronDown className={cn("w-4 h-4", isDarkMode ? "text-gray-500" : "text-gray-400")} />
+              )}
+            </div>
+          </button>
+
+          <div className="px-3 md:px-4 pb-3 md:pb-4">
+            {!isGoalsExpanded ? (
+              /* Compact strip: current week + current month */
+              goals.length === 0 ? (
+                <div className={cn("text-center py-6", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                  <Target className="w-8 h-8 mx-auto mb-2 opacity-50" />
+                  <p className="text-sm">Set weekly or monthly goals to keep your tasks aligned with what matters</p>
+                  <button
+                    onClick={() => openGoalsPanelWithForm("week")}
+                    className="text-xs text-emerald-500 hover:text-emerald-400 mt-1"
+                  >
+                    Add your first goal
+                  </button>
+                </div>
+              ) : (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-x-6 gap-y-3">
+                  <div>
+                    <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                      This Week
+                    </p>
+                    {currentWeekGoals.filter(g => g.status !== "dropped").length === 0 ? (
+                      <button
+                        onClick={() => openGoalsPanelWithForm("week")}
+                        className={cn("text-xs", isDarkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")}
+                      >
+                        + Add a goal for this week
+                      </button>
+                    ) : (
+                      currentWeekGoals.filter(g => g.status !== "dropped").map(renderGoalStripRow)
+                    )}
+                  </div>
+                  <div>
+                    <p className={cn("text-xs font-semibold uppercase tracking-wide mb-1", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                      This Month
+                    </p>
+                    {currentMonthGoals.filter(g => g.status !== "dropped").length === 0 ? (
+                      <button
+                        onClick={() => openGoalsPanelWithForm("month")}
+                        className={cn("text-xs", isDarkMode ? "text-gray-500 hover:text-gray-300" : "text-gray-400 hover:text-gray-600")}
+                      >
+                        + Add a goal for this month
+                      </button>
+                    ) : (
+                      currentMonthGoals.filter(g => g.status !== "dropped").map(renderGoalStripRow)
+                    )}
+                  </div>
+                </div>
+              )
+            ) : (
+              /* Expanded management panel */
+              <div className="space-y-3">
+                {/* Period type toggle + navigation */}
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className={cn("inline-flex rounded-lg p-0.5", isDarkMode ? "bg-gray-800" : "bg-gray-100")}>
+                    {(["week", "month"] as const).map(pt => (
+                      <button
+                        key={pt}
+                        onClick={() => { setGoalsPanelPeriodType(pt); resetGoalForm(); }}
+                        className={cn(
+                          "px-2.5 py-1 text-xs rounded-md font-medium transition-colors",
+                          goalsPanelPeriodType === pt
+                            ? "bg-emerald-600 text-white"
+                            : isDarkMode ? "text-gray-400 hover:text-gray-200" : "text-gray-600 hover:text-gray-800"
+                        )}
+                      >
+                        {pt === "week" ? "Weekly" : "Monthly"}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="flex items-center gap-1">
+                    <button
+                      onClick={() => navigateGoalsPeriod("prev")}
+                      className={cn("p-1.5 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+                    >
+                      <ChevronLeft className="w-4 h-4" />
+                    </button>
+                    <span className="text-xs md:text-sm font-medium min-w-[140px] text-center">
+                      {goalsPanelPeriodType === "week"
+                        ? `${format(startOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")} – ${format(endOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d, yyyy")}`
+                        : format(goalsPanelDate, "MMMM yyyy")}
+                    </span>
+                    <button
+                      onClick={() => navigateGoalsPeriod("next")}
+                      className={cn("p-1.5 rounded-lg", isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100")}
+                    >
+                      <ChevronRight className="w-4 h-4" />
+                    </button>
+                    {!isViewingCurrentPeriod && (
+                      <button
+                        onClick={() => { setGoalsPanelDate(new Date()); resetGoalForm(); }}
+                        className="text-xs text-emerald-500 hover:text-emerald-400 ml-1"
+                      >
+                        Current
+                      </button>
+                    )}
+                  </div>
+                </div>
+
+                {/* Goal list for the viewed period */}
+                {goalsPanelGoals.length === 0 && !showGoalForm ? (
+                  <div className={cn("text-center py-4 text-sm", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                    No goals for this {goalsPanelPeriodType}.
+                  </div>
+                ) : (
+                  <div className="space-y-1">
+                    {goalsPanelGoals.map(goal => {
+                      const counts = goalTaskCounts.get(goal._id);
+                      const parentGoal = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
+                      return (
+                        <div
+                          key={goal._id}
+                          className={cn(
+                            "group flex items-start gap-2 px-2 py-1.5 rounded-lg",
+                            isDarkMode ? "hover:bg-gray-800/50" : "hover:bg-gray-50",
+                            goal.status === "dropped" && "opacity-50"
+                          )}
+                        >
+                          <button
+                            onClick={() => handleToggleGoalAchieved(goal)}
+                            className={cn(
+                              "mt-0.5 rounded-full transition-colors",
+                              goal.status === "achieved"
+                                ? "text-emerald-500"
+                                : isDarkMode ? "text-gray-400 hover:text-gray-300" : "text-gray-500 hover:text-gray-600"
+                            )}
+                          >
+                            {goal.status === "achieved" ? (
+                              <CheckCircle2 className="w-4 h-4" />
+                            ) : (
+                              <div className="w-4 h-4 rounded-full border-2 border-current" />
+                            )}
+                          </button>
+                          <div className="flex-1 min-w-0">
+                            <p className={cn(
+                              "text-sm",
+                              (goal.status === "achieved" || goal.status === "dropped") && "line-through opacity-60"
+                            )}>
+                              {goal.title}
+                            </p>
+                            {goal.note && (
+                              <p className={cn("text-xs mt-0.5", isDarkMode ? "text-gray-400" : "text-gray-600")}>
+                                {goal.note}
+                              </p>
+                            )}
+                            {parentGoal && (
+                              <p className={cn("text-xs mt-0.5 flex items-center gap-1", isDarkMode ? "text-emerald-500" : "text-emerald-600")}>
+                                <Target className="w-3 h-3 shrink-0" />
+                                {parentGoal.title}
+                              </p>
+                            )}
+                          </div>
+                          {counts && (
+                            <span className={cn(
+                              "text-xs flex items-center gap-1 mt-1",
+                              counts.done === counts.total
+                                ? "text-emerald-500"
+                                : isDarkMode ? "text-gray-500" : "text-gray-400"
+                            )}>
+                              <CheckCircle2 className="w-3 h-3" />
+                              {counts.done}/{counts.total}
+                            </span>
+                          )}
+                          <div className="flex items-center gap-0.5 opacity-60 group-hover:opacity-100 transition-opacity">
+                            {isViewingPastPeriod && goal.status === "active" && (
+                              <button
+                                onClick={() => void handleCopyGoalToCurrentPeriod(goal)}
+                                title={goalsPanelPeriodType === "week" ? "Copy to this week" : "Copy to this month"}
+                                className={cn("p-1 rounded text-emerald-500", isDarkMode ? "hover:bg-gray-700" : "hover:bg-gray-100")}
+                              >
+                                <Copy className="w-3.5 h-3.5" />
+                              </button>
+                            )}
+                            <button
+                              onClick={() => openGoalForEdit(goal)}
+                              title="Edit goal"
+                              className={cn("p-1 rounded", isDarkMode ? "text-gray-400 hover:bg-gray-700" : "text-gray-500 hover:bg-gray-100")}
+                            >
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                            <button
+                              onClick={() => void handleSetGoalStatus(goal, goal.status === "dropped" ? "active" : "dropped")}
+                              title={goal.status === "dropped" ? "Restore goal" : "Drop goal"}
+                              className={cn("p-1 rounded", isDarkMode ? "text-gray-400 hover:bg-gray-700" : "text-gray-500 hover:bg-gray-100")}
+                            >
+                              {goal.status === "dropped" ? <Repeat className="w-3.5 h-3.5" /> : <X className="w-3.5 h-3.5" />}
+                            </button>
+                            <button
+                              onClick={() => void handleDeleteGoal(goal._id)}
+                              title="Delete goal"
+                              className="p-1 rounded text-red-400 hover:bg-red-500/20"
+                            >
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                )}
+
+                {/* Add/Edit form */}
+                {showGoalForm ? (
+                  <div className={cn(
+                    "p-3 rounded-lg border space-y-3",
+                    isDarkMode ? "bg-gray-800/50 border-gray-700" : "bg-gray-50 border-gray-200"
+                  )}>
+                    <input
+                      type="text"
+                      placeholder={goalsPanelPeriodType === "week" ? "What do you want to achieve this week?" : "What do you want to achieve this month?"}
+                      value={goalFormData.title}
+                      onChange={(e) => setGoalFormData(prev => ({ ...prev, title: e.target.value }))}
+                      onKeyDown={(e) => {
+                        if (e.key === "Enter" && goalFormData.title.trim()) {
+                          void (editingGoal ? handleUpdateGoal() : handleAddGoal());
+                        }
+                      }}
+                      autoFocus
+                      className={cn(
+                        "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500",
+                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      )}
+                    />
+                    <input
+                      type="text"
+                      placeholder="Note (optional)"
+                      value={goalFormData.note}
+                      onChange={(e) => setGoalFormData(prev => ({ ...prev, note: e.target.value }))}
+                      className={cn(
+                        "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500",
+                        isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                      )}
+                    />
+                    {goalsPanelPeriodType === "week" && parentGoalOptions.length > 0 && (
+                      <div>
+                        <label className={cn("block text-xs mb-1", isDarkMode ? "text-gray-400" : "text-gray-500")}>
+                          Link to monthly goal (optional)
+                        </label>
+                        <select
+                          value={goalFormData.parentGoalId}
+                          onChange={(e) => setGoalFormData(prev => ({ ...prev, parentGoalId: e.target.value }))}
+                          className={cn(
+                            "w-full px-3 py-2 rounded-lg border text-sm focus:outline-none focus:ring-2 focus:ring-emerald-500",
+                            isDarkMode ? "bg-gray-800 border-gray-700 text-white" : "bg-white border-gray-300"
+                          )}
+                        >
+                          <option value="">No monthly goal</option>
+                          {parentGoalOptions.map(g => (
+                            <option key={g._id} value={g._id}>{g.title}</option>
+                          ))}
+                        </select>
+                      </div>
+                    )}
+                    <div className="flex gap-2">
+                      <button
+                        onClick={resetGoalForm}
+                        className={cn(
+                          "flex-1 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors",
+                          isDarkMode ? "bg-gray-700 hover:bg-gray-600" : "bg-gray-200 hover:bg-gray-300"
+                        )}
+                      >
+                        Cancel
+                      </button>
+                      <button
+                        onClick={editingGoal ? handleUpdateGoal : handleAddGoal}
+                        disabled={!goalFormData.title.trim() || goalsLoading}
+                        className="flex-1 px-3 py-1.5 bg-emerald-600 text-white rounded-lg text-sm font-medium hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                      >
+                        {goalsLoading ? "Saving..." : editingGoal ? "Update" : "Add"}
+                      </button>
+                    </div>
+                  </div>
+                ) : (
+                  <button
+                    onClick={() => { resetGoalForm(); setShowGoalForm(true); }}
+                    className={cn(
+                      "flex items-center gap-1.5 text-xs px-2 py-1.5 rounded-lg transition-colors",
+                      isDarkMode ? "text-gray-500 hover:text-gray-300 hover:bg-gray-800" : "text-gray-400 hover:text-gray-600 hover:bg-gray-100"
+                    )}
+                  >
+                    <Plus className="w-3.5 h-3.5" />
+                    Add goal
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+
       {/* Eisenhower Matrix */}
       <div className="px-4 md:px-6 pb-4 md:pb-6">
         {isLoading ? (
@@ -4279,6 +4972,15 @@ export default function HomePage() {
                                   )}>
                                     <CheckCircle2 className="w-3 h-3" />
                                     {task.subtaskCompletedCount}/{task.subtaskCount}
+                                  </span>
+                                )}
+                                {task.goalId && goalsById.has(task.goalId) && (
+                                  <span
+                                    className={cn("text-xs flex items-center gap-1", isDarkMode ? "text-emerald-500" : "text-emerald-600")}
+                                    title={goalsById.get(task.goalId)!.title}
+                                  >
+                                    <Target className="w-3 h-3 shrink-0" />
+                                    <span className="max-w-[110px] truncate">{goalsById.get(task.goalId)!.title}</span>
                                   </span>
                                 )}
                               </div>
@@ -4569,6 +5271,27 @@ export default function HomePage() {
                     <option value="high">High Priority</option>
                     <option value="medium">Medium Priority</option>
                     <option value="low">Low Priority</option>
+                  </select>
+                </div>
+              )}
+
+              {(goals.length > 0 || formData.goalId) && (
+                <div>
+                  <label className={cn("block text-sm font-medium mb-2",
+                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    Goal (optional)
+                  </label>
+                  <select
+                    value={formData.goalId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, goalId: e.target.value }))}
+                    className={cn(
+                      "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-blue-500",
+                      darkMode
+                        ? "bg-gray-800 border-gray-700 text-white"
+                        : "bg-white border-gray-300 text-gray-900"
+                    )}
+                  >
+                    {renderGoalSelectOptions(formData.goalId)}
                   </select>
                 </div>
               )}
