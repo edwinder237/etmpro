@@ -151,6 +151,21 @@ body.paper {
 .cta:active {
   transform: translateY(1px);
 }
+/* Marketing landing: card lift on hover */
+.lift {
+  transition: border-color 0.18s ease, transform 0.18s ease;
+}
+.lift:hover {
+  border-color: #d8ccb6;
+  transform: translateY(-2px);
+}
+/* Warm paper background for the light-only marketing page */
+.paper-light {
+  background-color: #f1ecdc;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='180' height='180'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.3'/%3E%3C/svg%3E");
+  background-blend-mode: multiply;
+  color: #2c2419;
+}
 .hovrow {
   transition: background 0.12s ease;
 }

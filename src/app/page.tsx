@@ -1,6 +1,6 @@
 import { auth } from "@clerk/nextjs/server";
 import { redirect } from "next/navigation";
-import { Hero, Features, HowItWorks, Benefits, Contact, CTA, Footer } from "~/components/landing";
+import { Hero, Features, HowItWorks, Benefits, CTA, Footer } from "~/components/landing";
 
 export default async function LandingPage() {
   const { userId } = await auth();
@@ -11,12 +11,11 @@ export default async function LandingPage() {
   }
 
   return (
-    <main className="min-h-screen bg-gray-950">
+    <main className="paper-light min-h-screen">
       <Hero />
       <Features />
       <HowItWorks />
       <Benefits />
-      <Contact />
       <CTA />
       <Footer />
     </main>
