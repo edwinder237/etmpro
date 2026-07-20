@@ -258,6 +258,8 @@ export default function HomePage() {
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
   const [settingsIcalInput, setSettingsIcalInput] = useState("");
   const [settingsIcalError, setSettingsIcalError] = useState("");
+  // Settings modal edits are staged as drafts and applied together on Save
+  const [draftIcalUrls, setDraftIcalUrls] = useState<string[]>([]);
 
   // Calendar feed state
   interface CalendarEvent { id: string; title: string; start: string; end: string; allDay: boolean; location?: string; }
@@ -635,6 +637,65 @@ export default function HomePage() {
       body: JSON.stringify(partial),
     }).catch(() => { /* ignore — cache still holds the value */ });
   }, []);
+
+  // Whether the Settings drafts differ from the applied values
+  const settingsDirty =
+    locationInput.trim() !== weatherLocation ||
+    settingsKeyInput.trim() !== geminiApiKey ||
+    draftIcalUrls.length !== icalUrls.length ||
+    draftIcalUrls.some((u, i) => u !== icalUrls[i]);
+
+  // Apply all staged Settings drafts at once
+  const handleSaveSettings = () => {
+    const loc = locationInput.trim();
+    if (loc && loc !== weatherLocation) {
+      setWeatherLocation(loc);
+      safeSetItem("eisenq-weather-location", loc);
+    }
+    const key = settingsKeyInput.trim();
+    if (key !== geminiApiKey) {
+      if (key) {
+        setGeminiApiKey(key);
+        safeSetItem("eisenq-gemini-api-key", key);
+        persistSettings({ geminiApiKey: key });
+      } else {
+        setGeminiApiKey("");
+        safeRemoveItem("eisenq-gemini-api-key");
+        persistSettings({ geminiApiKey: "" });
+        setClothingSuggestion("");
+      }
+    }
+    const urlsChanged =
+      draftIcalUrls.length !== icalUrls.length || draftIcalUrls.some((u, i) => u !== icalUrls[i]);
+    if (urlsChanged) {
+      setIcalUrls(draftIcalUrls);
+      safeSetItem("eisenq-ical-urls", JSON.stringify(draftIcalUrls));
+      persistSettings({ icalUrls: draftIcalUrls });
+      if (!draftIcalUrls.length) setCalendarGroups([]);
+    }
+    setSettingsIcalInput("");
+    setSettingsIcalError("");
+    setIsSettingsOpen(false);
+  };
+
+  // Stage a new iCal feed into the draft list (validation + dedup)
+  const addDraftIcalUrl = () => {
+    const trimmed = settingsIcalInput.trim();
+    if (!trimmed) return;
+    try {
+      new URL(trimmed);
+    } catch {
+      setSettingsIcalError("Enter a valid URL.");
+      return;
+    }
+    if (draftIcalUrls.includes(trimmed)) {
+      setSettingsIcalError("This URL is already added.");
+      return;
+    }
+    setDraftIcalUrls([...draftIcalUrls, trimmed]);
+    setSettingsIcalInput("");
+    setSettingsIcalError("");
+  };
 
   // Lock body scroll when any modal/drawer is open
   useEffect(() => {
@@ -2094,7 +2155,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -3979,22 +4040,14 @@ export default function HomePage() {
               <div className="pb-5">
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Weather location</label>
                 <p className="text-[12px] mb-2" style={{ color: "var(--muted)" }}>Drives the weather and what-to-wear line in your greeting.</p>
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    value={locationInput}
-                    onChange={(e) => setLocationInput(e.target.value)}
-                    placeholder="Montreal, Quebec"
-                    className="flex-1 text-[13.5px] rounded-[10px] outline-none"
-                    style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
-                  />
-                  <button
-                    onClick={() => { const t = locationInput.trim(); if (t) { setWeatherLocation(t); safeSetItem("eisenq-weather-location", t); } }}
-                    className="cta text-[13px] font-semibold rounded-[10px]" style={{ padding: "9px 20px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}
-                  >
-                    Save
-                  </button>
-                </div>
+                <input
+                  type="text"
+                  value={locationInput}
+                  onChange={(e) => setLocationInput(e.target.value)}
+                  placeholder="Montreal, Quebec"
+                  className="w-full text-[13.5px] rounded-[10px] outline-none"
+                  style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
+                />
               </div>
 
               <div style={{ borderTop: "1px solid var(--line2)" }} />
@@ -4011,40 +4064,18 @@ export default function HomePage() {
                   value={settingsKeyInput}
                   onChange={(e) => setSettingsKeyInput(e.target.value)}
                   placeholder="AIza..."
-                  className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5"
+                  className="w-full text-[13.5px] rounded-[10px] outline-none"
                   style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
                 />
-                <div className="flex gap-2">
-                  {geminiApiKey && (
-                    <button
-                      onClick={() => {
-                        setGeminiApiKey("");
-                        setSettingsKeyInput("");
-                        safeRemoveItem("eisenq-gemini-api-key");
-                        persistSettings({ geminiApiKey: "" });
-                        setClothingSuggestion("");
-                      }}
-                      className="flex-1 text-[13px] font-medium rounded-[10px]"
-                      style={{ padding: "9px 12px", color: "var(--tag-fg)", background: "var(--tag-bg)" }}
-                    >
-                      Remove key
-                    </button>
-                  )}
+                {settingsKeyInput && (
                   <button
-                    onClick={() => {
-                      const trimmed = settingsKeyInput.trim();
-                      if (trimmed) {
-                        setGeminiApiKey(trimmed);
-                        safeSetItem("eisenq-gemini-api-key", trimmed);
-                        persistSettings({ geminiApiKey: trimmed });
-                      }
-                      setIsSettingsOpen(false);
-                    }}
-                    className="cta flex-1 text-[13px] font-semibold rounded-[10px]" style={{ padding: "9px 12px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}
+                    onClick={() => setSettingsKeyInput("")}
+                    className="text-[12px] font-medium mt-2"
+                    style={{ color: "var(--tag-fg)" }}
                   >
-                    Save
+                    Remove key
                   </button>
-                </div>
+                )}
               </div>
 
               <div style={{ borderTop: "1px solid var(--line2)" }} />
@@ -4055,20 +4086,14 @@ export default function HomePage() {
                 <p className="text-[12px] mb-3" style={{ color: "var(--muted)" }}>
                   Add .ics feed URLs from Google, Apple, or Outlook. Today&apos;s events appear next to your routine. For Google, use the <strong>Secret address in iCal format</strong> — not the public URL.
                 </p>
-                {icalUrls.length > 0 && (
+                {draftIcalUrls.length > 0 && (
                   <div className="flex flex-col gap-1.5 mb-3">
-                    {icalUrls.map((url, i) => (
+                    {draftIcalUrls.map((url, i) => (
                       <div key={i} className="flex items-center gap-2 text-[12px] rounded-[10px]" style={{ padding: "9px 12px", background: "var(--tint)" }}>
                         <Calendar className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
                         <span className="flex-1 truncate font-mono" style={{ color: "var(--ink3)" }}>{url}</span>
                         <button
-                          onClick={() => {
-                            const next = icalUrls.filter((_, j) => j !== i);
-                            setIcalUrls(next);
-                            safeSetItem("eisenq-ical-urls", JSON.stringify(next));
-                            persistSettings({ icalUrls: next });
-                            if (!next.length) setCalendarGroups([]);
-                          }}
+                          onClick={() => setDraftIcalUrls(draftIcalUrls.filter((_, j) => j !== i))}
                           className="shrink-0 p-1 rounded" style={{ color: "var(--tag-fg)" }}
                           aria-label="Remove calendar feed"
                         >
@@ -4084,35 +4109,13 @@ export default function HomePage() {
                       type="text"
                       value={settingsIcalInput}
                       onChange={(e) => { setSettingsIcalInput(e.target.value); setSettingsIcalError(""); }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter") {
-                          const trimmed = settingsIcalInput.trim();
-                          if (!trimmed) return;
-                          if (icalUrls.includes(trimmed)) { setSettingsIcalError("This URL is already added."); return; }
-                          const next = [...icalUrls, trimmed];
-                          setIcalUrls(next);
-                          safeSetItem("eisenq-ical-urls", JSON.stringify(next));
-                          persistSettings({ icalUrls: next });
-                          setSettingsIcalInput("");
-                          setSettingsIcalError("");
-                        }
-                      }}
+                      onKeyDown={(e) => { if (e.key === "Enter") addDraftIcalUrl(); }}
                       placeholder="https://calendar.google.com/...ical/..."
                       className="flex-1 text-[13.5px] rounded-[10px] outline-none"
                       style={{ padding: "10px 14px", background: "var(--field)", border: `1px solid ${settingsIcalError ? "var(--tag-fg)" : "var(--field-bd)"}`, color: "var(--ink)" }}
                     />
                     <button
-                      onClick={() => {
-                        const trimmed = settingsIcalInput.trim();
-                        if (!trimmed) return;
-                        if (icalUrls.includes(trimmed)) { setSettingsIcalError("This URL is already added."); return; }
-                        const next = [...icalUrls, trimmed];
-                        setIcalUrls(next);
-                        safeSetItem("eisenq-ical-urls", JSON.stringify(next));
-                        persistSettings({ icalUrls: next });
-                        setSettingsIcalInput("");
-                        setSettingsIcalError("");
-                      }}
+                      onClick={addDraftIcalUrl}
                       disabled={!settingsIcalInput.trim()}
                       className="cta text-[13px] font-semibold rounded-[10px] disabled:opacity-40" style={{ padding: "9px 20px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}
                     >
@@ -4122,6 +4125,23 @@ export default function HomePage() {
                   {settingsIcalError && <p className="text-[12px]" style={{ color: "var(--tag-fg)" }}>{settingsIcalError}</p>}
                 </div>
               </div>
+            </div>
+
+            {/* Footer: discard / apply all */}
+            <div className="flex items-center justify-end gap-2.5 mt-6 pt-4" style={{ borderTop: "1px solid var(--line2)" }}>
+              <Dialog.Close asChild>
+                <button className="text-[13px] font-medium rounded-[10px]" style={{ padding: "9px 18px", color: "var(--ink2)", background: "var(--chip)" }}>
+                  Cancel
+                </button>
+              </Dialog.Close>
+              <button
+                onClick={handleSaveSettings}
+                disabled={!settingsDirty}
+                className="cta text-[13px] font-semibold rounded-[10px] disabled:opacity-40"
+                style={{ padding: "9px 22px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}
+              >
+                Save changes
+              </button>
             </div>
           </Dialog.Content>
         </Dialog.Portal>
