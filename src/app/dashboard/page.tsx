@@ -3236,7 +3236,7 @@ export default function HomePage() {
                           <div className="mt-4 pt-[15px]" style={{ borderTop: "1px solid var(--line2)" }}>
                             <div className="text-[10px] tracking-[0.12em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Up next</div>
                             <div className="flex flex-col gap-[11px]">
-                              {upNext.slice(0, 6).map((t) => (
+                              {upNext.map((t) => (
                                 <div key={t._id} className="flex items-center gap-[11px]">
                                   <span className={cn("qcheck", t.status === "completed" && "checked")} onClick={() => void handleToggleComplete(t)} />
                                   <span className="text-[14px] cursor-pointer" onClick={() => void openTaskForEdit(t)}
