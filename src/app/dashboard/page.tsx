@@ -996,6 +996,17 @@ export default function HomePage() {
   const todaysChecklistItems = checklistItems.filter(isChecklistItemVisibleToday);
   const completedCount = todaysChecklistItems.filter(isChecklistItemCompletedToday).length;
 
+  // Maintenance items that are due today / overdue (or were completed today, so
+  // they show as done before rescheduling out of view). Surfaced in the routine card.
+  const isMaintenanceDoneToday = (m: MaintenanceItem) => m.lastCompletedDate === todayStr;
+  const maintenanceDaysLate = (m: MaintenanceItem) =>
+    Math.round((new Date(todayStr).getTime() - new Date(m.nextDueDate).getTime()) / 86400000);
+  const dueMaintenanceItems = maintenanceItems
+    .filter(m => m.nextDueDate <= todayStr || isMaintenanceDoneToday(m))
+    .sort((a, b) => a.nextDueDate.localeCompare(b.nextDueDate));
+  const routineTotal = todaysChecklistItems.length + dueMaintenanceItems.length;
+  const routineDone = completedCount + dueMaintenanceItems.filter(isMaintenanceDoneToday).length;
+
   // Today's app tasks (with a due date) shown alongside calendar events in the side panel
   const todaysScheduledTasks = tasks
     .filter(t => t.dueDate && isSameDay(new Date(t.dueDate), new Date()))
@@ -3379,7 +3390,7 @@ export default function HomePage() {
               <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[20px]">Today&apos;s routine</span>
               <button onClick={() => setRoutineDrawerOpen(true)} className="text-[12px]" style={{ color: "var(--accent)" }}>Manage ›</button>
             </div>
-            {todaysChecklistItems.length === 0 ? (
+            {routineTotal === 0 ? (
               <div className="py-1">
                 <div className="text-[14px]" style={{ color: "var(--ink3)" }}>No routine yet.</div>
                 <div className="text-[12.5px] mt-1 mb-3" style={{ color: "var(--muted)" }}>Add the small daily things you want to stay on top of.</div>
@@ -3389,9 +3400,9 @@ export default function HomePage() {
               <>
                 <div className="flex items-center gap-3 mb-[22px]">
                   <div className="flex-1 h-[6px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
-                    <div className="h-full rounded-full" style={{ width: `${todaysChecklistItems.length ? (completedCount / todaysChecklistItems.length) * 100 : 0}%`, background: "var(--pill-active)" }} />
+                    <div className="h-full rounded-full" style={{ width: `${routineTotal ? (routineDone / routineTotal) * 100 : 0}%`, background: "var(--pill-active)" }} />
                   </div>
-                  <span className="text-[12px] whitespace-nowrap" style={{ color: "var(--muted)" }}>{completedCount} of {todaysChecklistItems.length} done</span>
+                  <span className="text-[12px] whitespace-nowrap" style={{ color: "var(--muted)" }}>{routineDone} of {routineTotal} done</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-[18px]">
                   {todaysChecklistItems.map((item) => {
@@ -3400,6 +3411,25 @@ export default function HomePage() {
                       <div key={item._id} className="flex items-center gap-[10px]">
                         <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
                         <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
+                      </div>
+                    );
+                  })}
+                  {dueMaintenanceItems.map((m) => {
+                    const done = isMaintenanceDoneToday(m);
+                    const late = !done && maintenanceDaysLate(m) > 0;
+                    return (
+                      <div key={m._id} className="flex items-center gap-[10px]">
+                        <span className={cn("qcheck", done && "checked")} onClick={() => { if (!done) void handleMarkMaintenanceDone(m._id); }} />
+                        <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{m.title}</span>
+                        {!done && (
+                          late ? (
+                            <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
+                              Late{maintenanceDaysLate(m) > 1 ? ` ${maintenanceDaysLate(m)}d` : ""}
+                            </span>
+                          ) : (
+                            <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--muted5)", background: "var(--chip)" }}>Due</span>
+                          )
+                        )}
                       </div>
                     );
                   })}
