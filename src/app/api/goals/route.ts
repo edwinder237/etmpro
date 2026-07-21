@@ -25,6 +25,14 @@ function expectedParentType(periodType: GoalPeriod): GoalPeriod | null {
   return null;
 }
 
+// Boolean form of the period-key rules, for the PUT "move" path.
+function isValidKeyForType(periodType: GoalPeriod, periodKey: string): boolean {
+  if (periodType === "week") return weekKeyRegex.test(periodKey) && isSundayKey(periodKey);
+  if (periodType === "month") return monthKeyRegex.test(periodKey);
+  if (periodType === "year") return yearKeyRegex.test(periodKey);
+  return dateKeyRegex.test(periodKey);
+}
+
 function validatePeriodKey(
   periodType: GoalPeriod,
   periodKey: string,
@@ -105,6 +113,8 @@ const updateGoalSchema = z.object({
   note: z.string().max(1000).nullable().optional(),
   status: z.enum(["active", "achieved", "dropped"]).optional(),
   pinned: z.boolean().optional(),
+  periodType: z.enum(["week", "month", "year", "custom"]).optional(),
+  periodKey: z.string().optional(),
   startDate: z.string().regex(dateKeyRegex).optional(),
   endDate: z.string().regex(dateKeyRegex).optional(),
   parentGoalId: z.string().nullable().optional(),
@@ -218,11 +228,12 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, note, parentGoalId, startDate, endDate, ...restUpdateData } = parseResult.data;
+    const { _id, note, parentGoalId, periodType, periodKey, startDate, endDate, ...restUpdateData } = parseResult.data;
 
     if (!ObjectId.isValid(_id)) {
       return NextResponse.json({ error: "Invalid goal ID format" }, { status: 400 });
     }
+    const oid = new ObjectId(_id);
 
     const updateOperation: { $set: Record<string, unknown>; $unset?: Record<string, ""> } = {
       $set: {
@@ -238,8 +249,42 @@ export async function PUT(request: NextRequest) {
       updateOperation.$set.note = note;
     }
 
-    // Custom-goal date range edits; keep periodKey pinned to the start date.
-    if (startDate !== undefined || endDate !== undefined) {
+    // Move a goal to a different period (Week/Month/Year/Custom). This resets
+    // its parent link and unlinks any children, since the hierarchy may no
+    // longer hold.
+    const isMoving = periodType !== undefined;
+    if (isMoving) {
+      if (!periodKey || !isValidKeyForType(periodType, periodKey)) {
+        return NextResponse.json(
+          { error: `Invalid periodKey for a ${periodType} goal` },
+          { status: 400 }
+        );
+      }
+      updateOperation.$set.periodType = periodType;
+      updateOperation.$set.periodKey = periodKey;
+      if (periodType === "custom") {
+        if (!startDate || !endDate || endDate < startDate) {
+          return NextResponse.json(
+            { error: "Custom goals require an ordered start and end date" },
+            { status: 400 }
+          );
+        }
+        updateOperation.$set.startDate = startDate;
+        updateOperation.$set.endDate = endDate;
+      } else {
+        unset.startDate = "";
+        unset.endDate = "";
+      }
+      // Drop this goal's own parent link and detach its children.
+      unset.parentGoalId = "";
+      await goalsCollection.updateMany(
+        { parentGoalId: oid, userId },
+        { $unset: { parentGoalId: "" }, $set: { updatedAt: new Date() } }
+      );
+    }
+
+    // Custom-goal date range edits (not a period move); keep periodKey pinned to the start date.
+    if (!isMoving && (startDate !== undefined || endDate !== undefined)) {
       const goal = await goalsCollection.findOne({ _id: new ObjectId(_id), userId });
       if (!goal) {
         return NextResponse.json({ error: "Goal not found" }, { status: 404 });
@@ -263,10 +308,10 @@ export async function PUT(request: NextRequest) {
       updateOperation.$set.periodKey = nextStart;
     }
 
-    if (parentGoalId === null) {
+    if (!isMoving && parentGoalId === null) {
       unset.parentGoalId = "";
-    } else if (parentGoalId !== undefined) {
-      const goal = await goalsCollection.findOne({ _id: new ObjectId(_id), userId });
+    } else if (!isMoving && parentGoalId != null) {
+      const goal = await goalsCollection.findOne({ _id: oid, userId });
       if (!goal) {
         return NextResponse.json({ error: "Goal not found" }, { status: 404 });
       }
@@ -292,7 +337,7 @@ export async function PUT(request: NextRequest) {
     }
 
     const result = await goalsCollection.updateOne(
-      { _id: new ObjectId(_id), userId },
+      { _id: oid, userId },
       updateOperation
     );
 
@@ -300,7 +345,7 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Goal not found" }, { status: 404 });
     }
 
-    const updated = await goalsCollection.findOne({ _id: new ObjectId(_id), userId });
+    const updated = await goalsCollection.findOne({ _id: oid, userId });
     return NextResponse.json(updated);
   } catch {
     return NextResponse.json({ error: "Failed to update goal" }, { status: 500 });
