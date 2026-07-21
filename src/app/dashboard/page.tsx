@@ -29,7 +29,8 @@ import {
   Copy,
   Star,
   ArrowLeftRight,
-  Unlink
+  Unlink,
+  Link2
 } from "lucide-react";
 import {
   startOfWeek,
@@ -2306,6 +2307,10 @@ export default function HomePage() {
   const isTaskOverdue = (task: Task) =>
     !!task.dueDate && task.status !== "completed" && new Date(task.dueDate) < startOfDay(new Date());
 
+  // Title of the task this one is soft-linked under (shown as a matrix hint), if any.
+  const linkedParentTitle = (task: Task) =>
+    task.linkedParentId ? tasks.find(t => t._id === task.linkedParentId)?.title : undefined;
+
   // Masthead focus stack: the active goals in play right now across all periods
   // (this week/month/year, plus any custom goal whose window includes today),
   // ordered by horizon. We surface the first few and link to the rest.
@@ -3497,6 +3502,11 @@ export default function HomePage() {
                             <span className={cn("qcheck", nextAction.status === "completed" && "checked")} style={{ marginTop: 5 }} onClick={() => void handleToggleComplete(nextAction)} />
                             <div className="text-[17px] font-semibold cursor-pointer" onClick={() => void openTaskForEdit(nextAction)} style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
                               {nextAction.title}
+                              {nextAction.linkedParentId && (
+                                <span className="inline-flex items-center align-middle ml-1.5" title={`Part of: ${linkedParentTitle(nextAction) ?? "another task"}`} style={{ color: "var(--muted3)" }}>
+                                  <Link2 className="w-[14px] h-[14px]" />
+                                </span>
+                              )}
                               {nextAction.dueDate && nextAction.status !== "completed" && (
                                 isTaskOverdue(nextAction) ? (
                                   <span className="text-[12px] font-normal" style={{ color: "var(--tag-fg)" }}> · overdue {format(new Date(nextAction.dueDate), "MMM d")}</span>
@@ -3518,6 +3528,11 @@ export default function HomePage() {
                                     style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
                                     {t.title}
                                   </span>
+                                  {t.linkedParentId && (
+                                    <span className="shrink-0 inline-flex items-center" title={`Part of: ${linkedParentTitle(t) ?? "another task"}`} style={{ color: "var(--muted3)" }}>
+                                      <Link2 className="w-[13px] h-[13px]" />
+                                    </span>
+                                  )}
                                   {t.dueDate && t.status !== "completed" && (
                                     <span className="text-[12px] font-normal shrink-0 tabular-nums"
                                       style={{ color: isTaskOverdue(t) ? "var(--tag-fg)" : "var(--muted3)" }}>
