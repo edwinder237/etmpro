@@ -1831,6 +1831,18 @@ export default function HomePage() {
     }
   };
 
+  // Export the task being edited to a calendar provider / .ics, using its due
+  // date + time and duration (defaults to 30 min).
+  const exportEditingTaskToCalendar = (provider: Parameters<typeof addToCalendar>[1]) => {
+    if (!formData.dueDate) return;
+    const [y, m, d] = formData.dueDate.split("-").map(Number);
+    const [hh, mm] = (formData.dueTime || "09:00").split(":").map(Number);
+    const startDate = new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1, hh ?? 9, mm ?? 0);
+    const durationMin = (typeof formData.duration === "number" ? formData.duration : 0) || 30;
+    const endDate = new Date(startDate.getTime() + durationMin * 60 * 1000);
+    addToCalendar({ title: formData.title, description: formData.description, startDate, endDate }, provider);
+  };
+
   const handleToggleComplete = async (task: Task) => {
     try {
       setTaskOperationLoading(prev => ({ ...prev, [`toggle-${task._id}`]: true }));
@@ -3979,15 +3991,51 @@ export default function HomePage() {
               <h2 className="text-lg md:text-xl font-semibold">
                 {editingTask ? "Edit Task" : "Add New Task"}
               </h2>
-              <button
-                onClick={closeModal}
-                className={cn(
-                  "p-1.5 md:p-2 rounded-lg",
-                  "hover:bg-[var(--hover)]"
+              <div className="flex items-center gap-1">
+                {formData.dueDate && (
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button className="p-1.5 md:p-2 rounded-lg hover:bg-[var(--hover)] outline-none" title="Add to calendar / export iCal">
+                        <Share2 className="w-4 h-4 md:w-[18px] md:h-[18px]" style={{ color: "var(--muted5)" }} />
+                      </button>
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content align="end" sideOffset={5}
+                        className="min-w-[180px] rounded-lg p-1.5 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]">
+                        {([
+                          { id: "google", label: "Google Calendar", color: "#ef4444" },
+                          { id: "outlook", label: "Outlook.com", color: "var(--accent)" },
+                          { id: "office365", label: "Office 365", color: "#2563eb" },
+                          { id: "yahoo", label: "Yahoo Calendar", color: "#a855f7" },
+                        ] as const).map((p) => (
+                          <DropdownMenu.Item key={p.id}
+                            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]"
+                            onClick={() => { exportEditingTaskToCalendar(p.id); toast.success(`Opening ${p.label}`); }}>
+                            <Calendar className="w-4 h-4" style={{ color: p.color }} />
+                            {p.label}
+                          </DropdownMenu.Item>
+                        ))}
+                        <DropdownMenu.Separator className="h-px my-1 bg-[var(--line3)]" />
+                        <DropdownMenu.Item
+                          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]"
+                          onClick={() => { exportEditingTaskToCalendar("ics"); toast.success("Downloading .ics file"); }}>
+                          <Download className="w-4 h-4 text-[var(--muted)]" />
+                          Download .ics
+                        </DropdownMenu.Item>
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
                 )}
-              >
-                <X className="w-4 h-4 md:w-5 md:h-5" />
-              </button>
+                <button
+                  onClick={closeModal}
+                  className={cn(
+                    "p-1.5 md:p-2 rounded-lg",
+                    "hover:bg-[var(--hover)]"
+                  )}
+                >
+                  <X className="w-4 h-4 md:w-5 md:h-5" />
+                </button>
+              </div>
             </div>
 
             <div className="space-y-3 md:space-y-4">
