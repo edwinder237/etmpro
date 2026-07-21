@@ -27,7 +27,8 @@ import {
   Loader2,
   Copy,
   Star,
-  ArrowLeftRight
+  ArrowLeftRight,
+  Unlink
 } from "lucide-react";
 import {
   startOfWeek,
@@ -75,6 +76,7 @@ interface Task {
   createdAt: string;
   updatedAt: string;
   parentTaskId?: string;
+  linkedParentId?: string;
   goalId?: string;
   subtaskCount?: number;
   subtaskCompletedCount?: number;
@@ -222,6 +224,7 @@ export default function HomePage() {
     dueTime: string;
     duration: number | "";
     goalId: string;
+    linkedParentId: string;
   }>({
     title: "",
     description: "",
@@ -230,7 +233,8 @@ export default function HomePage() {
     dueDate: "",
     dueTime: "12:00",
     duration: "",
-    goalId: ""
+    goalId: "",
+    linkedParentId: ""
   });
   const [quickTaskInputs, setQuickTaskInputs] = useState<Record<TaskQuadrant, string>>({
     "urgent-important": "",
@@ -1781,12 +1785,14 @@ export default function HomePage() {
           priority: formData.quadrant === "urgent-important" ? "high" : formData.priority,
           dueDate: dueDateValue,
           duration: formData.duration || null,
-          goalId: formData.goalId || null
+          goalId: formData.goalId || null,
+          linkedParentId: formData.linkedParentId || null
         })
       });
 
       if (response.ok) {
         const updatedTask = await response.json() as Task;
+        const linkChanged = (editingTask.linkedParentId ?? "") !== (formData.linkedParentId || "");
         // Preserve subtask counts - use current subtasks array as source of truth
         // since editingTask might have stale values due to closure
         setTasks(prev => {
@@ -1801,6 +1807,8 @@ export default function HomePage() {
               : task
           );
         });
+        // A changed soft-link shifts another task's subtask counts; reconcile from server.
+        if (linkChanged) void fetchTasks();
         closeModal();
         toast.success("Task updated successfully!");
       } else {
@@ -1837,10 +1845,17 @@ export default function HomePage() {
       
       if (response.ok) {
         const updatedTask = await response.json() as Task;
-        setTasks(prev => prev.map(t => 
-          t._id === task._id ? updatedTask : t
-        ));
-        
+        // If this task is soft-linked under a parent, keep that parent's completed
+        // count in step so goal progress and the parent's checklist stay accurate.
+        const delta = task.status === "completed" ? -1 : 1;
+        setTasks(prev => prev.map(t => {
+          if (t._id === task._id) return updatedTask;
+          if (task.linkedParentId && t._id === task.linkedParentId) {
+            return { ...t, subtaskCompletedCount: Math.max(0, (t.subtaskCompletedCount ?? 0) + delta) };
+          }
+          return t;
+        }));
+
         if (task.status === "completed") {
           toast.success("Task marked as pending");
           playUncompleteSound();
@@ -1930,12 +1945,13 @@ export default function HomePage() {
           s._id === subtask._id ? newStatus === "completed" : s.status === "completed"
         ).length;
 
-        // Update parent's completed count
-        setTasks(prev => prev.map(t =>
-          t._id === editingTask?._id
-            ? { ...t, subtaskCompletedCount: newCompletedCount }
-            : t
-        ));
+        // Update parent's completed count, and — for a soft-linked task that also
+        // lives in the matrix — its own status so both views stay in sync.
+        setTasks(prev => prev.map(t => {
+          if (t._id === editingTask?._id) return { ...t, subtaskCompletedCount: newCompletedCount };
+          if (t._id === subtask._id) return { ...t, status: newStatus };
+          return t;
+        }));
         setEditingTask(prev => prev ? {
           ...prev,
           subtaskCompletedCount: newCompletedCount
@@ -2011,6 +2027,41 @@ export default function HomePage() {
     }
   };
 
+  // Remove a soft-linked task from this parent's checklist without deleting it —
+  // it stays a top-level task in the matrix.
+  const handleUnlinkSubtask = async (subtask: Task) => {
+    const wasCompleted = subtask.status === "completed";
+    setSubtasks(prev => prev.filter(s => s._id !== subtask._id));
+    setTasks(prev => prev.map(t => {
+      if (t._id === subtask._id) return { ...t, linkedParentId: undefined };
+      if (t._id === editingTask?._id) {
+        return {
+          ...t,
+          subtaskCount: Math.max(0, (t.subtaskCount ?? 1) - 1),
+          subtaskCompletedCount: wasCompleted ? Math.max(0, (t.subtaskCompletedCount ?? 1) - 1) : t.subtaskCompletedCount,
+        };
+      }
+      return t;
+    }));
+    setEditingTask(prev => prev ? {
+      ...prev,
+      subtaskCount: Math.max(0, (prev.subtaskCount ?? 1) - 1),
+      subtaskCompletedCount: wasCompleted ? Math.max(0, (prev.subtaskCompletedCount ?? 1) - 1) : prev.subtaskCompletedCount,
+    } : null);
+    try {
+      const response = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: subtask._id, linkedParentId: null }),
+      });
+      if (response.ok) toast.success("Task unlinked");
+      else { void fetchTasks(); toast.error("Failed to unlink task"); }
+    } catch {
+      void fetchTasks();
+      toast.error("Failed to unlink task");
+    }
+  };
+
   const startEditSubtask = (subtask: Task) => {
     setEditingSubtaskId(subtask._id);
     setEditingSubtaskTitle(subtask.title);
@@ -2078,7 +2129,8 @@ export default function HomePage() {
       dueDate: "",
       dueTime: "12:00",
       duration: "",
-      goalId: ""
+      goalId: "",
+      linkedParentId: ""
     });
     setEditingTask(null);
   };
@@ -2101,7 +2153,8 @@ export default function HomePage() {
       dueDate: "",
       dueTime: "12:00",
       duration: "",
-      goalId: ""
+      goalId: "",
+      linkedParentId: ""
     });
     setIsModalOpen(true);
   };
@@ -2117,7 +2170,8 @@ export default function HomePage() {
       dueDate: taskDate ? format(taskDate, "yyyy-MM-dd") : "",
       dueTime: taskDate ? format(taskDate, "HH:mm") : "12:00",
       duration: task.duration ?? "",
-      goalId: task.goalId ?? ""
+      goalId: task.goalId ?? "",
+      linkedParentId: task.linkedParentId ?? ""
     });
     setIsModalOpen(true);
 
@@ -3417,17 +3471,20 @@ export default function HomePage() {
                   <div className="px-[22px] pt-5 pb-[22px] flex-1 flex flex-col">
                     {nextAction ? (
                       <>
-                        <div style={{ borderLeft: `2px solid ${meta.color}`, paddingLeft: 14 }} className="cursor-pointer" onClick={() => void openTaskForEdit(nextAction)}>
+                        <div style={{ borderLeft: `2px solid ${meta.color}`, paddingLeft: 14 }}>
                           <span className="text-[11px] tracking-[0.1em] uppercase" style={{ color: "var(--muted3)" }}>{meta.nextLabel}</span>
-                          <div className="text-[17px] font-semibold mt-[3px]" style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
-                            {nextAction.title}
-                            {nextAction.dueDate && nextAction.status !== "completed" && (
-                              isTaskOverdue(nextAction) ? (
-                                <span className="text-[12px] font-normal" style={{ color: "var(--tag-fg)" }}> · overdue {format(new Date(nextAction.dueDate), "MMM d")}</span>
-                              ) : (
-                                <span className="text-[12px] font-normal" style={{ color: "var(--muted3)" }}> · {format(new Date(nextAction.dueDate), "MMM d")}</span>
-                              )
-                            )}
+                          <div className="flex items-start gap-[11px] mt-[3px]">
+                            <span className={cn("qcheck", nextAction.status === "completed" && "checked")} style={{ marginTop: 5 }} onClick={() => void handleToggleComplete(nextAction)} />
+                            <div className="text-[17px] font-semibold cursor-pointer" onClick={() => void openTaskForEdit(nextAction)} style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
+                              {nextAction.title}
+                              {nextAction.dueDate && nextAction.status !== "completed" && (
+                                isTaskOverdue(nextAction) ? (
+                                  <span className="text-[12px] font-normal" style={{ color: "var(--tag-fg)" }}> · overdue {format(new Date(nextAction.dueDate), "MMM d")}</span>
+                                ) : (
+                                  <span className="text-[12px] font-normal" style={{ color: "var(--muted3)" }}> · {format(new Date(nextAction.dueDate), "MMM d")}</span>
+                                )
+                              )}
+                            </div>
                           </div>
                         </div>
                         {upNext.length > 0 && (
@@ -4037,6 +4094,27 @@ export default function HomePage() {
                 </div>
               )}
 
+              {editingTask && (editingTask.subtaskCount ?? 0) === 0 && (
+                <div>
+                  <label className="block text-sm font-medium mb-2 text-[var(--ink3)]">
+                    Nest under task (optional)
+                  </label>
+                  <select
+                    value={formData.linkedParentId}
+                    onChange={(e) => setFormData(prev => ({ ...prev, linkedParentId: e.target.value }))}
+                    className="w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)] bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                  >
+                    <option value="">Not nested — stays standalone</option>
+                    {tasks
+                      .filter(t => t._id !== editingTask._id && t.linkedParentId !== editingTask._id)
+                      .map(t => <option key={t._id} value={t._id}>{t.title}</option>)}
+                  </select>
+                  <p className="text-xs mt-1.5 text-[var(--muted)]">
+                    Shows this task in the chosen task&apos;s subtasks too; it still appears in its own quadrant, and completing it syncs both.
+                  </p>
+                </div>
+              )}
+
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
@@ -4207,9 +4285,12 @@ export default function HomePage() {
                             )}
                           >
                             {subtask.title}
+                            {subtask.linkedParentId && (
+                              <span className="ml-2 text-[10px] px-[6px] py-px rounded-[5px] align-middle" style={{ color: "var(--accent)", background: "var(--chip)" }}>linked</span>
+                            )}
                           </span>
                         )}
-                        {editingSubtaskId !== subtask._id && (
+                        {editingSubtaskId !== subtask._id && !subtask.linkedParentId && (
                           <button
                             onClick={() => startEditSubtask(subtask)}
                             className={cn(
@@ -4221,15 +4302,26 @@ export default function HomePage() {
                             <Edit3 className="w-3 h-3" />
                           </button>
                         )}
-                        <button
-                          onClick={() => handleDeleteSubtask(subtask._id)}
-                          className={cn(
-                            "p-1 rounded transition-colors flex-shrink-0",
-                            "hover:bg-[var(--tag-bg)] text-[var(--tag-fg)]"
-                          )}
-                        >
-                          <Trash2 className="w-3 h-3" />
-                        </button>
+                        {subtask.linkedParentId ? (
+                          <button
+                            onClick={() => void handleUnlinkSubtask(subtask)}
+                            className="p-1 rounded transition-colors flex-shrink-0 hover:bg-[var(--hover)] text-[var(--muted2)]"
+                            aria-label="Unlink task"
+                            title="Unlink (keeps the task in its quadrant)"
+                          >
+                            <Unlink className="w-3 h-3" />
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => handleDeleteSubtask(subtask._id)}
+                            className={cn(
+                              "p-1 rounded transition-colors flex-shrink-0",
+                              "hover:bg-[var(--tag-bg)] text-[var(--tag-fg)]"
+                            )}
+                          >
+                            <Trash2 className="w-3 h-3" />
+                          </button>
+                        )}
                       </div>
                     ))}
                   </div>

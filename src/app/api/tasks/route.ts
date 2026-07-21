@@ -37,6 +37,7 @@ const updateTaskSchema = z.object({
   dueDate: z.string().datetime().nullable().optional(),
   duration: z.number().int().min(1).max(1440).nullable().optional(),
   goalId: z.string().nullable().optional(),
+  linkedParentId: z.string().nullable().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -91,7 +92,12 @@ export async function GET(request: NextRequest) {
               $match: {
                 $expr: {
                   $and: [
-                    { $eq: ["$parentTaskId", "$$parentId"] },
+                    {
+                      $or: [
+                        { $eq: ["$parentTaskId", "$$parentId"] },
+                        { $eq: ["$linkedParentId", "$$parentId"] }
+                      ]
+                    },
                     { $eq: ["$userId", "$$parentUserId"] }
                   ]
                 }
@@ -234,7 +240,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, dueDate, duration, goalId, ...restUpdateData } = parseResult.data;
+    const { _id, dueDate, duration, goalId, linkedParentId, ...restUpdateData } = parseResult.data;
 
     // Validate ObjectId format
     if (!ObjectId.isValid(_id)) {
@@ -278,6 +284,30 @@ export async function PUT(request: NextRequest) {
       }
 
       updateOperation.$set.goalId = new ObjectId(goalId);
+    }
+
+    // Handle linkedParentId - soft link to a parent task's subtask list. The task
+    // stays top-level in the matrix; if null, unlink.
+    if (linkedParentId === null) {
+      updateOperation.$unset = { ...updateOperation.$unset, linkedParentId: "" as const };
+    } else if (linkedParentId !== undefined) {
+      if (!ObjectId.isValid(linkedParentId) || linkedParentId === _id) {
+        return NextResponse.json({ error: "Invalid parent task" }, { status: 400 });
+      }
+      // The link target must be one of the user's own top-level tasks, and must
+      // not itself be linked under this task (prevents a 2-way loop).
+      const parent = await tasksCollection.findOne({
+        _id: new ObjectId(linkedParentId),
+        userId,
+        parentTaskId: null as unknown as undefined,
+      });
+      if (!parent) {
+        return NextResponse.json({ error: "Parent task not found or is a subtask" }, { status: 400 });
+      }
+      if (parent.linkedParentId?.equals(new ObjectId(_id))) {
+        return NextResponse.json({ error: "That task is already linked under this one" }, { status: 400 });
+      }
+      updateOperation.$set.linkedParentId = new ObjectId(linkedParentId);
     }
 
     const result = await tasksCollection.updateOne(
@@ -325,11 +355,17 @@ export async function DELETE(request: NextRequest) {
       return NextResponse.json({ error: "Invalid task ID format" }, { status: 400 });
     }
 
-    // First, delete all subtasks of this task (cascade delete)
+    // First, delete all real subtasks of this task (cascade delete)
     await tasksCollection.deleteMany({
       parentTaskId: new ObjectId(id),
       userId
     });
+
+    // Soft-linked tasks are independent top-level tasks — unlink them, don't delete.
+    await tasksCollection.updateMany(
+      { linkedParentId: new ObjectId(id), userId },
+      { $unset: { linkedParentId: "" }, $set: { updatedAt: new Date() } }
+    );
 
     // Then delete the task itself
     const result = await tasksCollection.deleteOne({ _id: new ObjectId(id), userId });
