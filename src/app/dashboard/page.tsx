@@ -3885,10 +3885,10 @@ export default function HomePage() {
 
       {/* Add Task Modal */}
       {isModalOpen && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+        <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: "var(--overlay)" }}>
           <div className={cn(
             "w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto rounded-lg p-4 md:p-6",
-            isDarkMode ? "bg-gray-900" : "bg-white"
+            "bg-[var(--drawer)] border border-[var(--drawer-bd)] text-[var(--ink)]"
           )}>
             <div className="flex items-center justify-between mb-4 md:mb-6">
               <h2 className="text-lg md:text-xl font-semibold">
@@ -3898,7 +3898,7 @@ export default function HomePage() {
                 onClick={closeModal}
                 className={cn(
                   "p-1.5 md:p-2 rounded-lg",
-                  isDarkMode ? "hover:bg-gray-800" : "hover:bg-gray-100"
+                  "hover:bg-[var(--hover)]"
                 )}
               >
                 <X className="w-4 h-4 md:w-5 md:h-5" />
@@ -3908,7 +3908,7 @@ export default function HomePage() {
             <div className="space-y-3 md:space-y-4">
               <div>
                 <label className={cn("block text-sm font-medium mb-2",
-                  isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  "text-[var(--ink3)]")}>
                   Task Title
                 </label>
                 <input
@@ -3919,15 +3919,15 @@ export default function HomePage() {
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                     darkMode
-                      ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500"
-                      : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
+                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
                   )}
                 />
               </div>
 
               <div>
                 <label className={cn("block text-sm font-medium mb-2",
-                  isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  "text-[var(--ink3)]")}>
                   Description
                 </label>
                 <textarea
@@ -3938,15 +3938,15 @@ export default function HomePage() {
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                     darkMode 
-                      ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500"
-                      : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
+                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
                   )}
                 />
               </div>
 
               <div>
                 <label className={cn("block text-sm font-medium mb-2",
-                  isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  "text-[var(--ink3)]")}>
                   Quadrant
                 </label>
                 <select
@@ -3962,8 +3962,8 @@ export default function HomePage() {
                   className={cn(
                     "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                     darkMode
-                      ? "bg-gray-800 border-gray-700 text-white"
-                      : "bg-white border-gray-300 text-gray-900"
+                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                   )}
                 >
                   <option value="urgent-important">Urgent & Important</option>
@@ -3976,7 +3976,7 @@ export default function HomePage() {
               {formData.quadrant !== "urgent-important" && (
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
-                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    "text-[var(--ink3)]")}>
                     Priority
                   </label>
                   <select
@@ -3985,8 +3985,8 @@ export default function HomePage() {
                     className={cn(
                       "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                       darkMode
-                        ? "bg-gray-800 border-gray-700 text-white"
-                        : "bg-white border-gray-300 text-gray-900"
+                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                     )}
                   >
                     <option value="high">High Priority</option>
@@ -3999,7 +3999,7 @@ export default function HomePage() {
               {(goals.length > 0 || formData.goalId) && (
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
-                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    "text-[var(--ink3)]")}>
                     Goal (optional)
                   </label>
                   <select
@@ -4008,8 +4008,8 @@ export default function HomePage() {
                     className={cn(
                       "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                       darkMode
-                        ? "bg-gray-800 border-gray-700 text-white"
-                        : "bg-white border-gray-300 text-gray-900"
+                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                     )}
                   >
                     {renderGoalSelectOptions(formData.goalId)}
@@ -4020,7 +4020,7 @@ export default function HomePage() {
               <div className="grid grid-cols-2 gap-3">
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
-                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    "text-[var(--ink3)]")}>
                     Due Date
                   </label>
                   <div className="relative">
@@ -4036,8 +4036,8 @@ export default function HomePage() {
                       className={cn(
                         "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                         darkMode
-                          ? "bg-gray-800 border-gray-700 text-white"
-                          : "bg-white border-gray-300 text-gray-900"
+                          ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                          : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                       )}
                     />
                     {formData.dueDate && (
@@ -4046,7 +4046,7 @@ export default function HomePage() {
                         onClick={() => setFormData(prev => ({ ...prev, dueDate: "", dueTime: "12:00" }))}
                         className={cn(
                           "absolute right-8 top-1/2 -translate-y-1/2 p-1 rounded-full transition-colors",
-                          isDarkMode ? "hover:bg-gray-700 text-gray-400" : "hover:bg-gray-200 text-gray-500"
+                          "hover:bg-[var(--hover)] text-[var(--muted2)]"
                         )}
                       >
                         <X className="w-4 h-4" />
@@ -4056,7 +4056,7 @@ export default function HomePage() {
                 </div>
                 <div>
                   <label className={cn("block text-sm font-medium mb-2",
-                    isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                    "text-[var(--ink3)]")}>
                     Time
                   </label>
                   <input
@@ -4067,8 +4067,8 @@ export default function HomePage() {
                     className={cn(
                       "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                       darkMode
-                        ? "bg-gray-800 border-gray-700 text-white disabled:opacity-50"
-                        : "bg-white border-gray-300 text-gray-900 disabled:opacity-50"
+                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] disabled:opacity-50"
+                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] disabled:opacity-50"
                     )}
                   />
                 </div>
@@ -4078,7 +4078,7 @@ export default function HomePage() {
             {/* Duration */}
             <div>
               <label className={cn("block text-sm font-medium mb-2",
-                isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                "text-[var(--ink3)]")}>
                 Duration (minutes)
               </label>
               <select
@@ -4087,8 +4087,8 @@ export default function HomePage() {
                 className={cn(
                   "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
                   darkMode
-                    ? "bg-gray-800 border-gray-700 text-white"
-                    : "bg-white border-gray-300 text-gray-900"
+                    ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                    : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                 )}
               >
                 <option value="">No duration</option>
@@ -4106,13 +4106,13 @@ export default function HomePage() {
 
             {/* Subtasks Section - Only show when editing a parent task */}
             {editingTask && !editingTask.parentTaskId && (
-              <div className={cn("mt-4 pt-4 border-t", isDarkMode ? "border-gray-700" : "border-gray-200")}>
+              <div className={cn("mt-4 pt-4 border-t", "border-[var(--line2)]")}>
                 <div className="flex items-center justify-between mb-3">
-                  <label className={cn("text-sm font-medium", isDarkMode ? "text-gray-300" : "text-gray-700")}>
+                  <label className={cn("text-sm font-medium", "text-[var(--ink3)]")}>
                     Subtasks
                   </label>
                   {(subtasks.length > 0 || (editingTask.subtaskCount ?? 0) > 0) && (
-                    <span className={cn("text-xs", isDarkMode ? "text-gray-500" : "text-gray-400")}>
+                    <span className={cn("text-xs", "text-[var(--muted)]")}>
                       {subtasks.filter(s => s.status === "completed").length}/{subtasks.length} completed
                     </span>
                   )}
@@ -4126,11 +4126,11 @@ export default function HomePage() {
                         key={i}
                         className={cn(
                           "flex items-center gap-2 p-2 rounded-lg",
-                          isDarkMode ? "bg-gray-800" : "bg-gray-100"
+                          "bg-[var(--tint)]"
                         )}
                       >
-                        <div className={cn("w-4 h-4 rounded-full animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-300")} />
-                        <div className={cn("flex-1 h-4 rounded animate-pulse", isDarkMode ? "bg-gray-700" : "bg-gray-300")} />
+                        <div className={cn("w-4 h-4 rounded-full animate-pulse", "bg-[var(--line2)]")} />
+                        <div className={cn("flex-1 h-4 rounded animate-pulse", "bg-[var(--line2)]")} />
                       </div>
                     ))}
                   </div>
@@ -4141,14 +4141,14 @@ export default function HomePage() {
                         key={subtask._id}
                         className={cn(
                           "flex items-center gap-2 p-2 rounded-lg",
-                          isDarkMode ? "bg-gray-800" : "bg-gray-100"
+                          "bg-[var(--tint)]"
                         )}
                       >
                         <button
                           onClick={() => handleToggleSubtaskComplete(subtask)}
                           className={cn(
                             "rounded-full transition-colors flex-shrink-0",
-                            subtask.status === "completed" ? "text-green-500" : isDarkMode ? "text-gray-400" : "text-gray-500"
+                            subtask.status === "completed" ? "text-[var(--accent)]" : "text-[var(--muted3)]"
                           )}
                         >
                           {subtask.status === "completed" ? (
@@ -4175,7 +4175,7 @@ export default function HomePage() {
                             }}
                             className={cn(
                               "flex-1 text-sm px-2 py-1 rounded border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                              isDarkMode ? "bg-gray-900 border-gray-700 text-white" : "bg-white border-gray-300 text-gray-900"
+                              isDarkMode ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]" : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
                             )}
                           />
                         ) : (
@@ -4194,7 +4194,7 @@ export default function HomePage() {
                             onClick={() => startEditSubtask(subtask)}
                             className={cn(
                               "p-1 rounded transition-colors flex-shrink-0",
-                              isDarkMode ? "hover:bg-gray-700 text-gray-400" : "hover:bg-gray-200 text-gray-500"
+                              "hover:bg-[var(--hover)] text-[var(--muted2)]"
                             )}
                             aria-label="Edit subtask"
                           >
@@ -4205,7 +4205,7 @@ export default function HomePage() {
                           onClick={() => handleDeleteSubtask(subtask._id)}
                           className={cn(
                             "p-1 rounded transition-colors flex-shrink-0",
-                            isDarkMode ? "hover:bg-red-500/20 text-red-400" : "hover:bg-red-50 text-red-500"
+                            "hover:bg-[var(--tag-bg)] text-[var(--tag-fg)]"
                           )}
                         >
                           <Trash2 className="w-3 h-3" />
@@ -4230,7 +4230,7 @@ export default function HomePage() {
                     }}
                     className={cn(
                       "flex-1 px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                      isDarkMode ? "bg-gray-800 border-gray-700 text-white placeholder-gray-500" : "bg-white border-gray-300 text-gray-900 placeholder-gray-400"
+                      isDarkMode ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]" : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
                     )}
                   />
                   <button
@@ -4250,8 +4250,8 @@ export default function HomePage() {
                 className={cn(
                   "flex-1 px-4 py-2 rounded-lg font-medium transition-colors",
                   darkMode 
-                    ? "bg-gray-800 hover:bg-gray-700 text-white"
-                    : "bg-gray-100 hover:bg-gray-200 text-gray-900"
+                    ? "bg-[var(--chip)] hover:bg-[var(--hover)] text-[var(--ink)]"
+                    : "bg-[var(--chip)] hover:bg-[var(--hover)] text-[var(--ink)]"
                 )}
               >
                 Cancel
