@@ -32,11 +32,13 @@ export async function GET(
       return NextResponse.json({ error: "Parent task not found" }, { status: 404 });
     }
 
-    // Fetch all subtasks for this parent
+    // Fetch real subtasks (parentTaskId) plus soft-linked tasks (linkedParentId),
+    // which also remain top-level in the matrix.
+    const oid = new ObjectId(taskId);
     const subtasks = await tasksCollection
       .find({
-        parentTaskId: new ObjectId(taskId),
-        userId
+        userId,
+        $or: [{ parentTaskId: oid }, { linkedParentId: oid }],
       })
       .sort({ createdAt: 1 })  // Oldest first for subtasks
       .toArray();

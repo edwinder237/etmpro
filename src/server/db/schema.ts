@@ -17,7 +17,8 @@ export interface Task {
   createdAt: Date;
   updatedAt: Date;
   userId?: string;
-  parentTaskId?: ObjectId;  // References parent task if this is a subtask
+  parentTaskId?: ObjectId;  // References parent task if this is a subtask (removes it from the matrix)
+  linkedParentId?: ObjectId; // Soft link: task stays top-level in the matrix but also appears under this parent's subtasks
   goalId?: ObjectId;        // Optional link to a weekly/monthly goal
 }
 
