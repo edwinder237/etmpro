@@ -104,6 +104,7 @@ const updateGoalSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   note: z.string().max(1000).nullable().optional(),
   status: z.enum(["active", "achieved", "dropped"]).optional(),
+  pinned: z.boolean().optional(),
   startDate: z.string().regex(dateKeyRegex).optional(),
   endDate: z.string().regex(dateKeyRegex).optional(),
   parentGoalId: z.string().nullable().optional(),

@@ -33,6 +33,7 @@ export interface Goal {
   startDate?: string;       // custom only, "YYYY-MM-DD"
   endDate?: string;         // custom only, "YYYY-MM-DD"
   status: GoalStatus;
+  pinned?: boolean;         // starred to appear in the masthead "In focus" stack
   parentGoalId?: ObjectId;  // link up one level: week → month, month → year
   userId: string;
   createdAt: Date;
