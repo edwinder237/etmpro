@@ -26,7 +26,8 @@ import {
   MapPin,
   Loader2,
   Copy,
-  Star
+  Star,
+  ArrowLeftRight
 } from "lucide-react";
 import {
   startOfWeek,
@@ -1400,6 +1401,44 @@ export default function HomePage() {
       if (!response.ok) void fetchGoals();
     } catch {
       void fetchGoals();
+    }
+  };
+
+  // Move a goal to a different period. Week/Month/Year target the current
+  // period; Custom starts a 90-day window from today (editable afterward).
+  const handleMoveGoal = async (goal: Goal, target: GoalPeriodType) => {
+    if (goal.periodType === target && target !== "custom") return;
+    const today = new Date();
+    const targetKey = target === "week" ? currentWeekKey
+      : target === "month" ? currentMonthKey
+      : target === "year" ? currentYearKey
+      : format(today, "yyyy-MM-dd");
+    const startDate = target === "custom" ? format(today, "yyyy-MM-dd") : undefined;
+    const endDate = target === "custom" ? format(addDays(today, 90), "yyyy-MM-dd") : undefined;
+    const label = target === "week" ? "this week" : target === "month" ? "this month" : target === "year" ? "this year" : "Custom";
+    // Optimistic: re-file the goal and detach any children that linked to it.
+    setGoals(prev => prev.map(g => {
+      if (g._id === goal._id) return { ...g, periodType: target, periodKey: targetKey, startDate, endDate, parentGoalId: undefined };
+      if (g.parentGoalId === goal._id) return { ...g, parentGoalId: undefined };
+      return g;
+    }));
+    try {
+      const response = await fetch("/api/goals", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: goal._id, periodType: target, periodKey: targetKey, ...(target === "custom" ? { startDate, endDate } : {}) }),
+      });
+      if (response.ok) {
+        const updated = await response.json() as Goal;
+        setGoals(prev => prev.map(g => g._id === updated._id ? updated : g));
+        toast.success(`Moved to ${label}`);
+      } else {
+        void fetchGoals();
+        toast.error("Failed to move goal");
+      }
+    } catch {
+      void fetchGoals();
+      toast.error("Failed to move goal");
     }
   };
 
@@ -3608,6 +3647,32 @@ export default function HomePage() {
                       style={{ color: goal.pinned ? "var(--accent)" : "var(--muted2)" }}>
                       <Star className="w-[14px] h-[14px]" style={{ fill: goal.pinned ? "var(--accent)" : "none" }} />
                     </button>
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <button title="Move to…" className="p-0.5 outline-none" style={{ color: "var(--muted2)" }}>
+                          <ArrowLeftRight className="w-[14px] h-[14px]" />
+                        </button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content align="end" sideOffset={5}
+                          className="min-w-[170px] rounded-lg p-1.5 shadow-lg z-[200]"
+                          style={{ background: "var(--drawer)", border: "1px solid var(--drawer-bd)" }}>
+                          <div className="text-[10px] tracking-[0.1em] uppercase px-3 pt-1 pb-1.5" style={{ color: "var(--muted3)" }}>Move to</div>
+                          {([["week", "This week"], ["month", "This month"], ["year", "This year"], ["custom", "Custom (90 days)"]] as const).map(([target, itemLabel]) => {
+                            const isCurrent = goal.periodType === target;
+                            return (
+                              <DropdownMenu.Item key={target} disabled={isCurrent}
+                                onSelect={() => { if (!isCurrent) void handleMoveGoal(goal, target); }}
+                                className={cn("flex items-center justify-between gap-2 px-3 py-2 rounded-md text-[13px] outline-none", !isCurrent && "cursor-pointer hover:bg-[var(--hover)]")}
+                                style={{ color: isCurrent ? "var(--muted3)" : "var(--ink2)" }}>
+                                {itemLabel}
+                                {isCurrent && <span className="text-[10px]" style={{ color: "var(--muted3)" }}>current</span>}
+                              </DropdownMenu.Item>
+                            );
+                          })}
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
                     {isViewingPastPeriod && goal.status === "active" && (
                       <button onClick={() => void handleCopyGoalToCurrentPeriod(goal)} title="Copy to current" style={{ color: "var(--accent)" }} className="p-0.5"><Copy className="w-[14px] h-[14px]" /></button>
                     )}
