@@ -2166,9 +2166,25 @@ export default function HomePage() {
   const isTaskOverdue = (task: Task) =>
     !!task.dueDate && task.status !== "completed" && new Date(task.dueDate) < startOfDay(new Date());
 
-  // This week's focus (first active weekly goal) + its task progress
-  const focusGoal = currentWeekGoals.find(g => g.status === "active") ?? currentWeekGoals[0];
-  const focusCounts = focusGoal ? goalTaskCounts.get(focusGoal._id) : undefined;
+  // Masthead focus stack: the active goals in play right now across all periods
+  // (this week/month/year, plus any custom goal whose window includes today),
+  // ordered by horizon. We surface the first few and link to the rest.
+  const FOCUS_STACK_LIMIT = 3;
+  const focusPeriodLabel: Record<GoalPeriodType, string> = { week: "Week", month: "Month", year: "Year", custom: "Custom" };
+  const activeFocusGoals = (() => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    const order: Record<GoalPeriodType, number> = { week: 0, month: 1, year: 2, custom: 3 };
+    return goals
+      .filter(g => g.status === "active" && (
+        (g.periodType === "week" && g.periodKey === currentWeekKey) ||
+        (g.periodType === "month" && g.periodKey === currentMonthKey) ||
+        (g.periodType === "year" && g.periodKey === currentYearKey) ||
+        (g.periodType === "custom" && (g.startDate ?? "") <= today && (g.endDate ?? "") >= today)
+      ))
+      .sort((a, b) => order[a.periodType] - order[b.periodType]);
+  })();
+  const focusGoals = activeFocusGoals.slice(0, FOCUS_STACK_LIMIT);
+  const focusMoreCount = activeFocusGoals.length - focusGoals.length;
 
   // Weather summary for the masthead line
   const weatherSummary = weatherData
@@ -2285,24 +2301,36 @@ export default function HomePage() {
               </div>
             )}
           </div>
-          {/* this week's focus */}
-          <div className="md:text-right md:shrink-0 md:pt-2 md:min-w-[220px]">
-            <div className="text-[10px] tracking-[0.14em] uppercase mb-[7px]" style={{ color: "var(--muted2)" }}>This week&apos;s focus</div>
-            {focusGoal ? (
-              <>
-                <div onClick={() => setIsGoalsExpanded(true)} style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }}
-                  className="text-[19px] leading-[1.25] cursor-pointer">
-                  {focusGoal.title}
-                </div>
-                {focusCounts && (
-                  <div className="flex items-center gap-2 md:justify-end mt-[9px]">
-                    <div className="w-[92px] h-[5px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
-                      <div className="h-full" style={{ width: `${focusCounts.total ? (focusCounts.done / focusCounts.total) * 100 : 0}%`, background: "var(--pill-active)" }} />
+          {/* in focus — active goals across all periods */}
+          <div className="md:text-right md:shrink-0 md:pt-2 md:min-w-[240px]">
+            <div className="text-[10px] tracking-[0.14em] uppercase mb-[9px]" style={{ color: "var(--muted2)" }}>In focus</div>
+            {focusGoals.length > 0 ? (
+              <div className="flex flex-col gap-[13px]">
+                {focusGoals.map((goal) => {
+                  const counts = goalTaskCounts.get(goal._id);
+                  return (
+                    <div key={goal._id} onClick={() => setIsGoalsExpanded(true)} className="cursor-pointer">
+                      <div className="flex items-baseline gap-2 md:justify-end">
+                        <span className="text-[9px] tracking-[0.1em] uppercase shrink-0" style={{ color: "var(--muted3)" }}>{focusPeriodLabel[goal.periodType]}</span>
+                        <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[17px] leading-[1.2]">{goal.title}</span>
+                      </div>
+                      {counts && counts.total > 0 && (
+                        <div className="flex items-center gap-2 md:justify-end mt-[6px]">
+                          <div className="w-[80px] h-[4px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
+                            <div className="h-full" style={{ width: `${(counts.done / counts.total) * 100}%`, background: "var(--pill-active)" }} />
+                          </div>
+                          <span className="text-[11px]" style={{ color: "var(--muted)" }}>{counts.done} / {counts.total}</span>
+                        </div>
+                      )}
                     </div>
-                    <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>{focusCounts.done} / {focusCounts.total}</span>
-                  </div>
+                  );
+                })}
+                {focusMoreCount > 0 && (
+                  <button onClick={() => setIsGoalsExpanded(true)} className="text-[12px] font-semibold md:text-right" style={{ color: "var(--accent)" }}>
+                    +{focusMoreCount} more ›
+                  </button>
                 )}
-              </>
+              </div>
             ) : (
               <>
                 <div onClick={() => setIsGoalsExpanded(true)} style={{ fontFamily: "var(--font-serif)", color: "var(--muted3)" }}
