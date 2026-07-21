@@ -18,6 +18,9 @@ import {
   ChevronLeft,
   ChevronRight,
   ChevronDown,
+  ChevronUp,
+  ChevronsUp,
+  GripVertical,
   ArrowRight,
   Share2,
   Download,
@@ -80,6 +83,7 @@ interface Task {
   parentTaskId?: string;
   linkedParentId?: string;
   goalId?: string;
+  sortOrder?: number;
   subtaskCount?: number;
   subtaskCompletedCount?: number;
 }
@@ -2283,11 +2287,15 @@ export default function HomePage() {
     "urgent-important", "important-not-urgent", "urgent-not-important", "not-urgent-not-important",
   ];
 
-  // Split a quadrant's visible tasks into the single "next action" + the "up next" list.
-  // Ordering: overdue first, then earliest due date, then oldest created.
-  const getQuadrantView = (quadrant: TaskQuadrant) => {
+  // A quadrant's visible tasks in display order. A manual sortOrder (set by the
+  // reorder controls) takes priority — "manual order wins"; tasks without one
+  // fall back to overdue → earliest due date → oldest created.
+  const getOrderedQuadrantTasks = (quadrant: TaskQuadrant) => {
     const startToday = startOfDay(new Date());
-    const sorted = [...getTasksByQuadrant(quadrant)].sort((a, b) => {
+    return [...getTasksByQuadrant(quadrant)].sort((a, b) => {
+      const ao = a.sortOrder ?? Infinity;
+      const bo = b.sortOrder ?? Infinity;
+      if (ao !== bo) return ao - bo;
       const aOver = a.dueDate && a.status !== "completed" && new Date(a.dueDate) < startToday ? 1 : 0;
       const bOver = b.dueDate && b.status !== "completed" && new Date(b.dueDate) < startToday ? 1 : 0;
       if (aOver !== bOver) return bOver - aOver;
@@ -2296,12 +2304,49 @@ export default function HomePage() {
       if (b.dueDate) return 1;
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
+  };
+
+  // Split a quadrant's ordered tasks into the single "next action" + the "up next" list.
+  const getQuadrantView = (quadrant: TaskQuadrant) => {
+    const sorted = getOrderedQuadrantTasks(quadrant);
     // Prefer an incomplete task as the headline "next action"
     const headlineIdx = sorted.findIndex(t => t.status !== "completed");
     const idx = headlineIdx === -1 ? 0 : headlineIdx;
     const nextAction = sorted[idx];
     const upNext = sorted.filter((_, i) => i !== idx);
     return { nextAction, upNext };
+  };
+
+  // Reorder a task within its quadrant. 'top' makes it the Next action.
+  const handleReorderTask = async (task: Task, dir: "up" | "down" | "top") => {
+    const ordered = getOrderedQuadrantTasks(task.quadrant);
+    const idx = ordered.findIndex(t => t._id === task._id);
+    if (idx === -1) return;
+    const arr = [...ordered];
+    if (dir === "top") {
+      if (idx === 0) return;
+      arr.splice(idx, 1);
+      arr.unshift(task);
+    } else if (dir === "up") {
+      if (idx === 0) return;
+      [arr[idx - 1], arr[idx]] = [arr[idx]!, arr[idx - 1]!];
+    } else {
+      if (idx === arr.length - 1) return;
+      [arr[idx + 1], arr[idx]] = [arr[idx]!, arr[idx + 1]!];
+    }
+    const items = arr.map((t, i) => ({ id: t._id, sortOrder: i }));
+    const orderMap = new Map(items.map(it => [it.id, it.sortOrder]));
+    setTasks(prev => prev.map(t => orderMap.has(t._id) ? { ...t, sortOrder: orderMap.get(t._id) } : t));
+    try {
+      const res = await fetch("/api/tasks/reorder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) void fetchTasks();
+    } catch {
+      void fetchTasks();
+    }
   };
 
   const isTaskOverdue = (task: Task) =>
@@ -3533,8 +3578,8 @@ export default function HomePage() {
                           <div className="mt-4 pt-[15px]" style={{ borderTop: "1px solid var(--line2)" }}>
                             <div className="text-[10px] tracking-[0.12em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Up next</div>
                             <div className="flex flex-col gap-[11px]">
-                              {upNext.map((t) => (
-                                <div key={t._id} className="flex items-center gap-[11px]">
+                              {upNext.map((t, i) => (
+                                <div key={t._id} className="group flex items-center gap-[11px]">
                                   <span className={cn("qcheck", t.status === "completed" && "checked")} onClick={() => void handleToggleComplete(t)} />
                                   <span className="text-[14px] cursor-pointer flex-1 min-w-0 truncate" onClick={() => void openTaskForEdit(t)}
                                     style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
@@ -3556,6 +3601,31 @@ export default function HomePage() {
                                       <Clock className="w-[11px] h-[11px]" />{formatShortDuration(t.duration)}
                                     </span>
                                   )}
+                                  <DropdownMenu.Root>
+                                    <DropdownMenu.Trigger asChild>
+                                      <button className="shrink-0 p-0.5 rounded outline-none opacity-40 hover:opacity-100 transition-opacity" title="Reorder" style={{ color: "var(--muted4)" }}>
+                                        <GripVertical className="w-[14px] h-[14px]" />
+                                      </button>
+                                    </DropdownMenu.Trigger>
+                                    <DropdownMenu.Portal>
+                                      <DropdownMenu.Content align="end" sideOffset={5}
+                                        className="min-w-[168px] rounded-lg p-1.5 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]">
+                                        <DropdownMenu.Item onSelect={() => void handleReorderTask(t, "top")}
+                                          className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
+                                          <ChevronsUp className="w-4 h-4" style={{ color: "var(--accent)" }} /> Make next action
+                                        </DropdownMenu.Item>
+                                        <DropdownMenu.Item onSelect={() => void handleReorderTask(t, "up")}
+                                          className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
+                                          <ChevronUp className="w-4 h-4" style={{ color: "var(--muted2)" }} /> Move up
+                                        </DropdownMenu.Item>
+                                        <DropdownMenu.Item disabled={i === upNext.length - 1} onSelect={() => void handleReorderTask(t, "down")}
+                                          className={cn("flex items-center gap-2 px-3 py-2 rounded-md text-[13px] outline-none", i === upNext.length - 1 ? "opacity-40" : "cursor-pointer hover:bg-[var(--hover)]")}
+                                          style={{ color: "var(--ink2)" }}>
+                                          <ChevronDown className="w-4 h-4" style={{ color: "var(--muted2)" }} /> Move down
+                                        </DropdownMenu.Item>
+                                      </DropdownMenu.Content>
+                                    </DropdownMenu.Portal>
+                                  </DropdownMenu.Root>
                                 </div>
                               ))}
                             </div>
