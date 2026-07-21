@@ -2311,6 +2311,15 @@ export default function HomePage() {
   const linkedParentTitle = (task: Task) =>
     task.linkedParentId ? tasks.find(t => t._id === task.linkedParentId)?.title : undefined;
 
+  // Compact duration label for the matrix rows, e.g. 30 → "30m", 90 → "1h30".
+  const formatShortDuration = (min?: number): string | null => {
+    if (!min || min <= 0) return null;
+    if (min < 60) return `${min}m`;
+    const h = Math.floor(min / 60);
+    const m = min % 60;
+    return m ? `${h}h${m}` : `${h}h`;
+  };
+
   // Masthead focus stack: the active goals in play right now across all periods
   // (this week/month/year, plus any custom goal whose window includes today),
   // ordered by horizon. We surface the first few and link to the rest.
@@ -3514,6 +3523,9 @@ export default function HomePage() {
                                   <span className="text-[12px] font-normal" style={{ color: "var(--muted3)" }}> · {format(new Date(nextAction.dueDate), "MMM d")}</span>
                                 )
                               )}
+                              {formatShortDuration(nextAction.duration) && nextAction.status !== "completed" && (
+                                <span className="text-[12px] font-normal" style={{ color: "var(--muted4)" }}> · {formatShortDuration(nextAction.duration)}</span>
+                              )}
                             </div>
                           </div>
                         </div>
@@ -3537,6 +3549,11 @@ export default function HomePage() {
                                     <span className="text-[12px] font-normal shrink-0 tabular-nums"
                                       style={{ color: isTaskOverdue(t) ? "var(--tag-fg)" : "var(--muted3)" }}>
                                       {format(new Date(t.dueDate), "MMM d")}
+                                    </span>
+                                  )}
+                                  {formatShortDuration(t.duration) && t.status !== "completed" && (
+                                    <span className="text-[12px] font-normal shrink-0 inline-flex items-center gap-[3px] tabular-nums" style={{ color: "var(--muted4)" }}>
+                                      <Clock className="w-[11px] h-[11px]" />{formatShortDuration(t.duration)}
                                     </span>
                                   )}
                                 </div>
