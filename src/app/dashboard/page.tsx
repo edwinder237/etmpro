@@ -39,6 +39,8 @@ import {
   subMonths,
   addWeeks,
   subWeeks,
+  addYears,
+  subYears,
   addDays,
   subDays,
   isToday,
@@ -76,7 +78,7 @@ interface Task {
   subtaskCompletedCount?: number;
 }
 
-type GoalPeriodType = "week" | "month";
+type GoalPeriodType = "week" | "month" | "year" | "custom";
 type GoalStatus = "active" | "achieved" | "dropped";
 
 interface Goal {
@@ -85,6 +87,8 @@ interface Goal {
   note?: string;
   periodType: GoalPeriodType;
   periodKey: string;
+  startDate?: string;
+  endDate?: string;
   status: GoalStatus;
   parentGoalId?: string;
   createdAt: string;
@@ -317,7 +321,7 @@ export default function HomePage() {
   const [goalsPanelDate, setGoalsPanelDate] = useState(new Date());
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
-  const [goalFormData, setGoalFormData] = useState({ title: "", note: "", parentGoalId: "" });
+  const [goalFormData, setGoalFormData] = useState({ title: "", note: "", parentGoalId: "", startDate: "", endDate: "" });
 
   // Subtask state (for edit modal)
   const [subtasks, setSubtasks] = useState<Task[]>([]);
@@ -1199,15 +1203,26 @@ export default function HomePage() {
   // Goals functions
   const weekKeyOf = (d: Date) => format(startOfWeek(d, { weekStartsOn: 0 }), "yyyy-MM-dd");
   const monthKeyOf = (d: Date) => format(d, "yyyy-MM");
+  const yearKeyOf = (d: Date) => format(d, "yyyy");
+  const keyOfPeriod = (pt: GoalPeriodType, d: Date) =>
+    pt === "week" ? weekKeyOf(d) : pt === "month" ? monthKeyOf(d) : yearKeyOf(d);
   const currentWeekKey = weekKeyOf(new Date());
   const currentMonthKey = monthKeyOf(new Date());
-  const goalsPanelKey = goalsPanelPeriodType === "week" ? weekKeyOf(goalsPanelDate) : monthKeyOf(goalsPanelDate);
-  const goalsPanelCurrentKey = goalsPanelPeriodType === "week" ? currentWeekKey : currentMonthKey;
-  const isViewingPastPeriod = goalsPanelKey < goalsPanelCurrentKey;
+  const currentYearKey = yearKeyOf(new Date());
+  // Custom goals aren't navigable by a single period; the panel lists them all.
+  const isCustomPeriod = goalsPanelPeriodType === "custom";
+  const goalsPanelKey = isCustomPeriod ? "" : keyOfPeriod(goalsPanelPeriodType, goalsPanelDate);
+  const goalsPanelCurrentKey = isCustomPeriod ? "" : keyOfPeriod(goalsPanelPeriodType, new Date());
+  const isViewingPastPeriod = !isCustomPeriod && goalsPanelKey < goalsPanelCurrentKey;
 
   const currentWeekGoals = goals.filter(g => g.periodType === "week" && g.periodKey === currentWeekKey);
   const currentMonthGoals = goals.filter(g => g.periodType === "month" && g.periodKey === currentMonthKey);
-  const goalsPanelGoals = goals.filter(g => g.periodType === goalsPanelPeriodType && g.periodKey === goalsPanelKey);
+  const currentYearGoals = goals.filter(g => g.periodType === "year" && g.periodKey === currentYearKey);
+  const goalsPanelGoals = isCustomPeriod
+    ? goals
+        .filter(g => g.periodType === "custom")
+        .sort((a, b) => (a.endDate ?? "").localeCompare(b.endDate ?? ""))
+    : goals.filter(g => g.periodType === goalsPanelPeriodType && g.periodKey === goalsPanelKey);
 
   const goalsById = useMemo(() => new Map(goals.map(g => [g._id, g])), [goals]);
 
@@ -1223,18 +1238,30 @@ export default function HomePage() {
     return counts;
   }, [tasks]);
 
-  // Active month goals selectable as parent for the week being viewed in the panel
+  // Goals selectable as the parent for the goal being added/edited in the panel.
+  // Weekly goals link up to the month they fall in; monthly goals to their year.
   const parentGoalOptions = (() => {
-    if (goalsPanelPeriodType !== "week") return [];
-    const monthKey = goalsPanelKey.slice(0, 7);
-    const options = goals.filter(g => g.periodType === "month" && g.periodKey === monthKey && g.status === "active");
-    // Keep the currently-linked parent selectable when editing, even if achieved/dropped/other month
-    if (editingGoal?.parentGoalId && !options.some(g => g._id === editingGoal.parentGoalId)) {
-      const linked = goalsById.get(editingGoal.parentGoalId);
-      if (linked) return [linked, ...options];
+    let candidates: Goal[] = [];
+    if (goalsPanelPeriodType === "week") {
+      const monthKey = goalsPanelKey.slice(0, 7);
+      candidates = goals.filter(g => g.periodType === "month" && g.periodKey === monthKey && g.status === "active");
+    } else if (goalsPanelPeriodType === "month") {
+      const yearKey = goalsPanelKey.slice(0, 4);
+      candidates = goals.filter(g => g.periodType === "year" && g.periodKey === yearKey && g.status === "active");
+    } else {
+      return [];
     }
-    return options;
+    // Keep the currently-linked parent selectable when editing, even if achieved/dropped/other period
+    if (editingGoal?.parentGoalId && !candidates.some(g => g._id === editingGoal.parentGoalId)) {
+      const linked = goalsById.get(editingGoal.parentGoalId);
+      if (linked) return [linked, ...candidates];
+    }
+    return candidates;
   })();
+  const canLinkParent = goalsPanelPeriodType === "week" || goalsPanelPeriodType === "month";
+  const parentLinkPlaceholder = goalsPanelPeriodType === "week"
+    ? "Link to a monthly goal (optional)"
+    : "Link to a yearly goal (optional)";
 
   const fetchGoals = async () => {
     try {
@@ -1249,13 +1276,27 @@ export default function HomePage() {
   };
 
   const resetGoalForm = () => {
-    setGoalFormData({ title: "", note: "", parentGoalId: "" });
+    setGoalFormData({ title: "", note: "", parentGoalId: "", startDate: "", endDate: "" });
     setEditingGoal(null);
     setShowGoalForm(false);
   };
 
+  // A custom goal's date range is valid when both dates are set and ordered
+  const customRangeValid = !isCustomPeriod ||
+    (!!goalFormData.startDate && !!goalFormData.endDate && goalFormData.endDate >= goalFormData.startDate);
+
+  // Set a custom range starting today, ending `days` out (30/60/90 presets)
+  const applyCustomPreset = (days: number) => {
+    const today = new Date();
+    setGoalFormData(p => ({
+      ...p,
+      startDate: format(today, "yyyy-MM-dd"),
+      endDate: format(addDays(today, days), "yyyy-MM-dd"),
+    }));
+  };
+
   const handleAddGoal = async () => {
-    if (!goalFormData.title.trim()) return;
+    if (!goalFormData.title.trim() || !customRangeValid) return;
     setGoalsLoading(true);
     try {
       const response = await fetch("/api/goals", {
@@ -1265,8 +1306,10 @@ export default function HomePage() {
           title: goalFormData.title.trim(),
           note: goalFormData.note.trim() || undefined,
           periodType: goalsPanelPeriodType,
-          periodKey: goalsPanelKey,
-          parentGoalId: goalsPanelPeriodType === "week" ? (goalFormData.parentGoalId || undefined) : undefined,
+          periodKey: isCustomPeriod ? goalFormData.startDate : goalsPanelKey,
+          startDate: isCustomPeriod ? goalFormData.startDate : undefined,
+          endDate: isCustomPeriod ? goalFormData.endDate : undefined,
+          parentGoalId: canLinkParent ? (goalFormData.parentGoalId || undefined) : undefined,
         }),
       });
       if (response.ok) {
@@ -1285,7 +1328,7 @@ export default function HomePage() {
   };
 
   const handleUpdateGoal = async () => {
-    if (!editingGoal || !goalFormData.title.trim()) return;
+    if (!editingGoal || !goalFormData.title.trim() || !customRangeValid) return;
     setGoalsLoading(true);
     try {
       const response = await fetch("/api/goals", {
@@ -1295,8 +1338,11 @@ export default function HomePage() {
           _id: editingGoal._id,
           title: goalFormData.title.trim(),
           note: goalFormData.note.trim() || null,
-          ...(editingGoal.periodType === "week"
+          ...(editingGoal.periodType === "week" || editingGoal.periodType === "month"
             ? { parentGoalId: goalFormData.parentGoalId || null }
+            : {}),
+          ...(editingGoal.periodType === "custom"
+            ? { startDate: goalFormData.startDate, endDate: goalFormData.endDate }
             : {}),
         }),
       });
@@ -1362,10 +1408,13 @@ export default function HomePage() {
   };
 
   const handleCopyGoalToCurrentPeriod = async (goal: Goal) => {
-    const targetKey = goal.periodType === "week" ? currentWeekKey : currentMonthKey;
-    // Keep the monthly link only if the parent goal belongs to the current month
+    const targetKey = goal.periodType === "week" ? currentWeekKey
+      : goal.periodType === "month" ? currentMonthKey
+      : currentYearKey;
+    // Keep the parent link only if the parent belongs to the current parent period
     const parent = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
-    const keepParent = parent && parent.periodKey === currentMonthKey;
+    const parentCurrentKey = goal.periodType === "week" ? currentMonthKey : currentYearKey;
+    const keepParent = parent && parent.periodKey === parentCurrentKey;
     try {
       const response = await fetch("/api/goals", {
         method: "POST",
@@ -1381,7 +1430,8 @@ export default function HomePage() {
       if (response.ok) {
         const newGoal = await response.json() as Goal;
         setGoals(prev => [...prev, newGoal]);
-        toast.success(goal.periodType === "week" ? "Copied to this week" : "Copied to this month");
+        const label = goal.periodType === "week" ? "this week" : goal.periodType === "month" ? "this month" : "this year";
+        toast.success(`Copied to ${label}`);
       } else {
         toast.error("Failed to copy goal");
       }
@@ -1396,6 +1446,8 @@ export default function HomePage() {
       title: goal.title,
       note: goal.note ?? "",
       parentGoalId: goal.parentGoalId ?? "",
+      startDate: goal.startDate ?? "",
+      endDate: goal.endDate ?? "",
     });
     setShowGoalForm(true);
   };
@@ -1406,7 +1458,10 @@ export default function HomePage() {
       if (goalsPanelPeriodType === "week") {
         return direction === "prev" ? subWeeks(d, 1) : addWeeks(d, 1);
       }
-      return direction === "prev" ? subMonths(d, 1) : addMonths(d, 1);
+      if (goalsPanelPeriodType === "month") {
+        return direction === "prev" ? subMonths(d, 1) : addMonths(d, 1);
+      }
+      return direction === "prev" ? subYears(d, 1) : addYears(d, 1);
     });
   };
 
@@ -1415,23 +1470,40 @@ export default function HomePage() {
   const goalOptionLabel = (goal: Goal) => {
     if (goal.periodType === "week" && goal.periodKey === currentWeekKey) return goal.title;
     if (goal.periodType === "month" && goal.periodKey === currentMonthKey) return goal.title;
+    if (goal.periodType === "year" && goal.periodKey === currentYearKey) return goal.title;
     if (goal.periodType === "week") {
       const [y = 0, m = 1, d = 1] = goal.periodKey.split("-").map(Number);
       return `${goal.title} (week of ${format(new Date(y, m - 1, d), "MMM d")})`;
     }
-    const [y = 0, m = 1] = goal.periodKey.split("-").map(Number);
-    return `${goal.title} (${format(new Date(y, m - 1, 1), "MMMM yyyy")})`;
+    if (goal.periodType === "month") {
+      const [y = 0, m = 1] = goal.periodKey.split("-").map(Number);
+      return `${goal.title} (${format(new Date(y, m - 1, 1), "MMMM yyyy")})`;
+    }
+    if (goal.periodType === "year") {
+      return `${goal.title} (${goal.periodKey})`;
+    }
+    // custom
+    if (goal.startDate && goal.endDate) {
+      return `${goal.title} (${format(new Date(goal.startDate), "MMM d")} – ${format(new Date(goal.endDate), "MMM d")})`;
+    }
+    return goal.title;
   };
 
   // Options for the "Goal (optional)" select in both task forms. Active goals of the
   // current periods are always offered; a linked goal outside those (past period,
   // achieved/dropped) stays selectable so editing never silently drops the link.
   const renderGoalSelectOptions = (selectedGoalId: string) => {
+    const today = format(new Date(), "yyyy-MM-dd");
     const weekOptions = currentWeekGoals.filter(g => g.status === "active");
     const monthOptions = currentMonthGoals.filter(g => g.status === "active");
+    const yearOptions = currentYearGoals.filter(g => g.status === "active");
+    // Custom goals whose range is currently active
+    const customOptions = goals.filter(g =>
+      g.periodType === "custom" && g.status === "active" &&
+      (g.startDate ?? "") <= today && (g.endDate ?? "") >= today);
     const selected = selectedGoalId ? goalsById.get(selectedGoalId) : undefined;
     const selectedIsListed = !!selected &&
-      (weekOptions.some(g => g._id === selected._id) || monthOptions.some(g => g._id === selected._id));
+      [weekOptions, monthOptions, yearOptions, customOptions].some(list => list.some(g => g._id === selected._id));
     return (
       <>
         <option value="">No goal</option>
@@ -1449,6 +1521,20 @@ export default function HomePage() {
           <optgroup label="This Month">
             {monthOptions.map(g => (
               <option key={g._id} value={g._id}>{g.title}</option>
+            ))}
+          </optgroup>
+        )}
+        {yearOptions.length > 0 && (
+          <optgroup label="This Year">
+            {yearOptions.map(g => (
+              <option key={g._id} value={g._id}>{g.title}</option>
+            ))}
+          </optgroup>
+        )}
+        {customOptions.length > 0 && (
+          <optgroup label="Custom">
+            {customOptions.map(g => (
+              <option key={g._id} value={g._id}>{goalOptionLabel(g)}</option>
             ))}
           </optgroup>
         )}
@@ -2080,9 +2166,25 @@ export default function HomePage() {
   const isTaskOverdue = (task: Task) =>
     !!task.dueDate && task.status !== "completed" && new Date(task.dueDate) < startOfDay(new Date());
 
-  // This week's focus (first active weekly goal) + its task progress
-  const focusGoal = currentWeekGoals.find(g => g.status === "active") ?? currentWeekGoals[0];
-  const focusCounts = focusGoal ? goalTaskCounts.get(focusGoal._id) : undefined;
+  // Masthead focus stack: the active goals in play right now across all periods
+  // (this week/month/year, plus any custom goal whose window includes today),
+  // ordered by horizon. We surface the first few and link to the rest.
+  const FOCUS_STACK_LIMIT = 3;
+  const focusPeriodLabel: Record<GoalPeriodType, string> = { week: "Week", month: "Month", year: "Year", custom: "Custom" };
+  const activeFocusGoals = (() => {
+    const today = format(new Date(), "yyyy-MM-dd");
+    const order: Record<GoalPeriodType, number> = { week: 0, month: 1, year: 2, custom: 3 };
+    return goals
+      .filter(g => g.status === "active" && (
+        (g.periodType === "week" && g.periodKey === currentWeekKey) ||
+        (g.periodType === "month" && g.periodKey === currentMonthKey) ||
+        (g.periodType === "year" && g.periodKey === currentYearKey) ||
+        (g.periodType === "custom" && (g.startDate ?? "") <= today && (g.endDate ?? "") >= today)
+      ))
+      .sort((a, b) => order[a.periodType] - order[b.periodType]);
+  })();
+  const focusGoals = activeFocusGoals.slice(0, FOCUS_STACK_LIMIT);
+  const focusMoreCount = activeFocusGoals.length - focusGoals.length;
 
   // Weather summary for the masthead line
   const weatherSummary = weatherData
@@ -2199,24 +2301,36 @@ export default function HomePage() {
               </div>
             )}
           </div>
-          {/* this week's focus */}
-          <div className="md:text-right md:shrink-0 md:pt-2 md:min-w-[220px]">
-            <div className="text-[10px] tracking-[0.14em] uppercase mb-[7px]" style={{ color: "var(--muted2)" }}>This week&apos;s focus</div>
-            {focusGoal ? (
-              <>
-                <div onClick={() => setIsGoalsExpanded(true)} style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }}
-                  className="text-[19px] leading-[1.25] cursor-pointer">
-                  {focusGoal.title}
-                </div>
-                {focusCounts && (
-                  <div className="flex items-center gap-2 md:justify-end mt-[9px]">
-                    <div className="w-[92px] h-[5px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
-                      <div className="h-full" style={{ width: `${focusCounts.total ? (focusCounts.done / focusCounts.total) * 100 : 0}%`, background: "var(--pill-active)" }} />
+          {/* in focus — active goals across all periods */}
+          <div className="md:text-right md:shrink-0 md:pt-2 md:min-w-[240px]">
+            <div className="text-[10px] tracking-[0.14em] uppercase mb-[9px]" style={{ color: "var(--muted2)" }}>In focus</div>
+            {focusGoals.length > 0 ? (
+              <div className="flex flex-col gap-[13px]">
+                {focusGoals.map((goal) => {
+                  const counts = goalTaskCounts.get(goal._id);
+                  return (
+                    <div key={goal._id} onClick={() => setIsGoalsExpanded(true)} className="cursor-pointer">
+                      <div className="flex items-baseline gap-2 md:justify-end">
+                        <span className="text-[9px] tracking-[0.1em] uppercase shrink-0" style={{ color: "var(--muted3)" }}>{focusPeriodLabel[goal.periodType]}</span>
+                        <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[17px] leading-[1.2]">{goal.title}</span>
+                      </div>
+                      {counts && counts.total > 0 && (
+                        <div className="flex items-center gap-2 md:justify-end mt-[6px]">
+                          <div className="w-[80px] h-[4px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
+                            <div className="h-full" style={{ width: `${(counts.done / counts.total) * 100}%`, background: "var(--pill-active)" }} />
+                          </div>
+                          <span className="text-[11px]" style={{ color: "var(--muted)" }}>{counts.done} / {counts.total}</span>
+                        </div>
+                      )}
                     </div>
-                    <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>{focusCounts.done} / {focusCounts.total}</span>
-                  </div>
+                  );
+                })}
+                {focusMoreCount > 0 && (
+                  <button onClick={() => setIsGoalsExpanded(true)} className="text-[12px] font-semibold md:text-right" style={{ color: "var(--accent)" }}>
+                    +{focusMoreCount} more ›
+                  </button>
                 )}
-              </>
+              </div>
             ) : (
               <>
                 <div onClick={() => setIsGoalsExpanded(true)} style={{ fontFamily: "var(--font-serif)", color: "var(--muted3)" }}
@@ -3424,33 +3538,43 @@ export default function HomePage() {
             </div>
             <button onClick={() => { setIsGoalsExpanded(false); resetGoalForm(); }} className="p-1 text-[20px]" style={{ color: "var(--muted)" }}>✕</button>
           </div>
-          <div className="flex items-center justify-between flex-wrap gap-2" style={{ padding: "18px 26px 0" }}>
+          <div className="flex items-center justify-between flex-wrap gap-y-2 gap-x-3" style={{ padding: "18px 26px 0" }}>
             <div className="inline-flex rounded-[9px] p-0.5" style={{ background: "var(--chip)" }}>
-              {(["week", "month"] as const).map((pt) => (
+              {([["week", "Week"], ["month", "Month"], ["year", "Year"], ["custom", "Custom"]] as const).map(([pt, label]) => (
                 <button key={pt} onClick={() => { setGoalsPanelPeriodType(pt); resetGoalForm(); }}
-                  className="text-[12.5px] rounded-[7px]" style={{ padding: "6px 15px", fontWeight: goalsPanelPeriodType === pt ? 600 : 400, color: goalsPanelPeriodType === pt ? "var(--btn-fg)" : "var(--accent)", background: goalsPanelPeriodType === pt ? "var(--pill-active)" : "transparent" }}>{pt === "week" ? "This week" : "This month"}</button>
+                  className="text-[12.5px] rounded-[7px]" style={{ padding: "6px 12px", fontWeight: goalsPanelPeriodType === pt ? 600 : 400, color: goalsPanelPeriodType === pt ? "var(--btn-fg)" : "var(--accent)", background: goalsPanelPeriodType === pt ? "var(--pill-active)" : "transparent" }}>{label}</button>
               ))}
             </div>
-            <div className="flex items-center gap-1">
-              <button onClick={() => navigateGoalsPeriod("prev")} className="navbtn" style={{ width: 30, height: 30 }}><ChevronLeft className="w-4 h-4" /></button>
-              <span className="text-[12px] text-center min-w-[120px]" style={{ color: "var(--ink2)" }}>
-                {goalsPanelPeriodType === "week" ? `${format(startOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")} – ${format(endOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")}` : format(goalsPanelDate, "MMMM yyyy")}
-              </span>
-              <button onClick={() => navigateGoalsPeriod("next")} className="navbtn" style={{ width: 30, height: 30 }}><ChevronRight className="w-4 h-4" /></button>
-            </div>
+            {!isCustomPeriod && (
+              <div className="flex items-center gap-1">
+                <button onClick={() => navigateGoalsPeriod("prev")} className="navbtn" style={{ width: 30, height: 30 }}><ChevronLeft className="w-4 h-4" /></button>
+                <span className="text-[12px] text-center min-w-[120px]" style={{ color: "var(--ink2)" }}>
+                  {goalsPanelPeriodType === "week"
+                    ? `${format(startOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")} – ${format(endOfWeek(goalsPanelDate, { weekStartsOn: 0 }), "MMM d")}`
+                    : goalsPanelPeriodType === "month"
+                      ? format(goalsPanelDate, "MMMM yyyy")
+                      : format(goalsPanelDate, "yyyy")}
+                </span>
+                <button onClick={() => navigateGoalsPeriod("next")} className="navbtn" style={{ width: 30, height: 30 }}><ChevronRight className="w-4 h-4" /></button>
+              </div>
+            )}
           </div>
           <div style={{ padding: "14px 22px 4px" }} className="flex flex-col gap-1.5">
             {goalsPanelGoals.length === 0 && !showGoalForm && (
-              <div className="text-center rounded-[12px] text-[13px]" style={{ padding: "20px", border: "1px dashed var(--dash2)", color: "var(--muted)" }}>No goals this {goalsPanelPeriodType}.</div>
+              <div className="text-center rounded-[12px] text-[13px]" style={{ padding: "20px", border: "1px dashed var(--dash2)", color: "var(--muted)" }}>{isCustomPeriod ? "No custom goals yet." : `No goals this ${goalsPanelPeriodType}.`}</div>
             )}
             {goalsPanelGoals.map((goal) => {
               const counts = goalTaskCounts.get(goal._id);
               const parent = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
+              const rangeLabel = goal.periodType === "custom" && goal.startDate && goal.endDate
+                ? `${format(new Date(goal.startDate), "MMM d")} – ${format(new Date(goal.endDate), "MMM d, yyyy")}`
+                : null;
               return (
                 <div key={goal._id} className="flex items-start gap-2.5 rounded-[11px]" style={{ padding: "12px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", opacity: goal.status === "dropped" ? 0.55 : 1 }}>
                   <span className={cn("qcheck", goal.status === "achieved" && "checked")} style={{ marginTop: 3 }} onClick={() => handleToggleGoalAchieved(goal)} />
                   <div className="flex-1 min-w-0">
                     <div className="text-[14px]" style={{ color: "var(--ink)", textDecoration: goal.status !== "active" ? "line-through" : undefined }}>{goal.title}</div>
+                    {rangeLabel && <div className="text-[11.5px] mt-0.5" style={{ color: "var(--accent)" }}>{rangeLabel}</div>}
                     {goal.note && <div className="text-[12px] mt-0.5" style={{ color: "var(--muted)" }}>{goal.note}</div>}
                     <div className="flex items-center gap-2 mt-1">
                       {counts && <span className="text-[11.5px]" style={{ color: "var(--muted)" }}>{counts.done} / {counts.total} tasks</span>}
@@ -3473,22 +3597,49 @@ export default function HomePage() {
             {showGoalForm ? (
               <div className="rounded-[14px]" style={{ padding: "18px", background: "var(--form-bg)", border: "1px solid var(--form-bd)" }}>
                 <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[16px] mb-3">{editingGoal ? "Edit goal" : "New goal"}</div>
-                <input type="text" autoFocus placeholder={goalsPanelPeriodType === "week" ? "What to achieve this week?" : "What to achieve this month?"} value={goalFormData.title}
+                <input type="text" autoFocus placeholder={goalsPanelPeriodType === "week" ? "What to achieve this week?" : goalsPanelPeriodType === "month" ? "What to achieve this month?" : goalsPanelPeriodType === "year" ? "What to achieve this year?" : "What to achieve in this window?"} value={goalFormData.title}
                   onChange={(e) => setGoalFormData((p) => ({ ...p, title: e.target.value }))}
-                  onKeyDown={(e) => { if (e.key === "Enter" && goalFormData.title.trim()) void (editingGoal ? handleUpdateGoal() : handleAddGoal()); }}
+                  onKeyDown={(e) => { if (e.key === "Enter" && goalFormData.title.trim() && customRangeValid) void (editingGoal ? handleUpdateGoal() : handleAddGoal()); }}
                   className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
                 <input type="text" placeholder="Why it matters · optional" value={goalFormData.note}
                   onChange={(e) => setGoalFormData((p) => ({ ...p, note: e.target.value }))}
                   className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
-                {goalsPanelPeriodType === "week" && parentGoalOptions.length > 0 && (
+                {isCustomPeriod && (
+                  <div className="mb-3">
+                    <div className="flex gap-2 mb-2">
+                      <label className="flex-1">
+                        <span className="text-[11px] tracking-[0.06em] uppercase block mb-1" style={{ color: "var(--muted5)" }}>Start</span>
+                        <input type="date" value={goalFormData.startDate}
+                          onChange={(e) => setGoalFormData((p) => ({ ...p, startDate: e.target.value }))}
+                          className="w-full text-[13px] rounded-[10px] outline-none" style={{ padding: "9px 12px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                      </label>
+                      <label className="flex-1">
+                        <span className="text-[11px] tracking-[0.06em] uppercase block mb-1" style={{ color: "var(--muted5)" }}>End</span>
+                        <input type="date" value={goalFormData.endDate} min={goalFormData.startDate || undefined}
+                          onChange={(e) => setGoalFormData((p) => ({ ...p, endDate: e.target.value }))}
+                          className="w-full text-[13px] rounded-[10px] outline-none" style={{ padding: "9px 12px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                      </label>
+                    </div>
+                    <div className="flex items-center gap-1.5">
+                      {[30, 60, 90].map((d) => (
+                        <button key={d} type="button" onClick={() => applyCustomPreset(d)}
+                          className="text-[11.5px] rounded-[8px]" style={{ padding: "5px 11px", color: "var(--accent)", background: "var(--chip)" }}>{d} days</button>
+                      ))}
+                    </div>
+                    {!customRangeValid && (goalFormData.startDate || goalFormData.endDate) && (
+                      <div className="text-[11.5px] mt-1.5" style={{ color: "var(--tag-fg)" }}>Pick a start and end date; end can&apos;t be before start.</div>
+                    )}
+                  </div>
+                )}
+                {canLinkParent && parentGoalOptions.length > 0 && (
                   <select value={goalFormData.parentGoalId} onChange={(e) => setGoalFormData((p) => ({ ...p, parentGoalId: e.target.value }))}
                     className="w-full text-[13.5px] rounded-[10px] outline-none mb-3" style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}>
-                    <option value="">Link to a monthly goal (optional)</option>
+                    <option value="">{parentLinkPlaceholder}</option>
                     {parentGoalOptions.map((g) => <option key={g._id} value={g._id}>{g.title}</option>)}
                   </select>
                 )}
                 <div className="flex gap-2.5">
-                  <button onClick={editingGoal ? handleUpdateGoal : handleAddGoal} disabled={!goalFormData.title.trim() || goalsLoading}
+                  <button onClick={editingGoal ? handleUpdateGoal : handleAddGoal} disabled={!goalFormData.title.trim() || !customRangeValid || goalsLoading}
                     className="cta text-[13px] font-semibold rounded-[10px] disabled:opacity-50" style={{ padding: "9px 20px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}>{goalsLoading ? "Saving…" : editingGoal ? "Update" : "Add goal"}</button>
                   <button onClick={resetGoalForm} className="text-[13px]" style={{ padding: "9px 16px", color: "var(--accent)" }}>Cancel</button>
                 </div>
