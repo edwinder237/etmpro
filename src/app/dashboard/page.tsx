@@ -25,7 +25,8 @@ import {
   Cloud,
   MapPin,
   Loader2,
-  Copy
+  Copy,
+  Star
 } from "lucide-react";
 import {
   startOfWeek,
@@ -90,6 +91,7 @@ interface Goal {
   startDate?: string;
   endDate?: string;
   status: GoalStatus;
+  pinned?: boolean;
   parentGoalId?: string;
   createdAt: string;
   updatedAt: string;
@@ -1385,6 +1387,22 @@ export default function HomePage() {
     void handleSetGoalStatus(goal, goal.status === "achieved" ? "active" : "achieved");
   };
 
+  const handleToggleGoalPinned = async (goal: Goal) => {
+    const pinned = !goal.pinned;
+    // Optimistic update
+    setGoals(prev => prev.map(g => g._id === goal._id ? { ...g, pinned } : g));
+    try {
+      const response = await fetch("/api/goals", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: goal._id, pinned }),
+      });
+      if (!response.ok) void fetchGoals();
+    } catch {
+      void fetchGoals();
+    }
+  };
+
   const handleDeleteGoal = async (id: string) => {
     // Optimistic: mirror the server-side cascade locally
     setGoals(prev => prev
@@ -2183,8 +2201,12 @@ export default function HomePage() {
       ))
       .sort((a, b) => order[a.periodType] - order[b.periodType]);
   })();
-  const focusGoals = activeFocusGoals.slice(0, FOCUS_STACK_LIMIT);
-  const focusMoreCount = activeFocusGoals.length - focusGoals.length;
+  // If any current goals are starred, the stack shows only those; otherwise it
+  // falls back to the smart auto-selection so the masthead is never empty.
+  const pinnedFocusGoals = activeFocusGoals.filter(g => g.pinned);
+  const focusSource = pinnedFocusGoals.length > 0 ? pinnedFocusGoals : activeFocusGoals;
+  const focusGoals = focusSource.slice(0, FOCUS_STACK_LIMIT);
+  const focusMoreCount = focusSource.length - focusGoals.length;
 
   // Weather summary for the masthead line
   const weatherSummary = weatherData
@@ -3582,6 +3604,10 @@ export default function HomePage() {
                     </div>
                   </div>
                   <div className="flex items-center gap-1 shrink-0">
+                    <button onClick={() => void handleToggleGoalPinned(goal)} title={goal.pinned ? "Remove from focus" : "Show in focus"} className="p-0.5"
+                      style={{ color: goal.pinned ? "var(--accent)" : "var(--muted2)" }}>
+                      <Star className="w-[14px] h-[14px]" style={{ fill: goal.pinned ? "var(--accent)" : "none" }} />
+                    </button>
                     {isViewingPastPeriod && goal.status === "active" && (
                       <button onClick={() => void handleCopyGoalToCurrentPeriod(goal)} title="Copy to current" style={{ color: "var(--accent)" }} className="p-0.5"><Copy className="w-[14px] h-[14px]" /></button>
                     )}
