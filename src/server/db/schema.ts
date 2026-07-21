@@ -21,7 +21,7 @@ export interface Task {
   goalId?: ObjectId;        // Optional link to a weekly/monthly goal
 }
 
-export type GoalPeriodType = "week" | "month";
+export type GoalPeriodType = "week" | "month" | "year" | "custom";
 export type GoalStatus = "active" | "achieved" | "dropped";
 
 export interface Goal {
@@ -29,9 +29,11 @@ export interface Goal {
   title: string;
   note?: string;
   periodType: GoalPeriodType;
-  periodKey: string;        // week: Sunday start date "YYYY-MM-DD"; month: "YYYY-MM"
+  periodKey: string;        // week: Sunday start "YYYY-MM-DD"; month: "YYYY-MM"; year: "YYYY"; custom: start date "YYYY-MM-DD"
+  startDate?: string;       // custom only, "YYYY-MM-DD"
+  endDate?: string;         // custom only, "YYYY-MM-DD"
   status: GoalStatus;
-  parentGoalId?: ObjectId;  // weekly goal → monthly goal link
+  parentGoalId?: ObjectId;  // link up one level: week → month, month → year
   userId: string;
   createdAt: Date;
   updatedAt: Date;

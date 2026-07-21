@@ -7,6 +7,10 @@ import { z } from "zod";
 
 const weekKeyRegex = /^\d{4}-\d{2}-\d{2}$/;
 const monthKeyRegex = /^\d{4}-(0[1-9]|1[0-2])$/;
+const yearKeyRegex = /^\d{4}$/;
+const dateKeyRegex = /^\d{4}-(0[1-9]|1[0-2])-(0[1-9]|[12]\d|3[01])$/;
+
+type GoalPeriod = "week" | "month" | "year" | "custom";
 
 // Weeks start on Sunday (weekStartsOn: 0 everywhere in the app)
 function isSundayKey(key: string): boolean {
@@ -14,8 +18,15 @@ function isSundayKey(key: string): boolean {
   return new Date(Date.UTC(y, m - 1, d)).getUTCDay() === 0;
 }
 
+// The period type a goal of `periodType` may link up to, or null if none.
+function expectedParentType(periodType: GoalPeriod): GoalPeriod | null {
+  if (periodType === "week") return "month";
+  if (periodType === "month") return "year";
+  return null;
+}
+
 function validatePeriodKey(
-  periodType: "week" | "month",
+  periodType: GoalPeriod,
   periodKey: string,
   ctx: z.RefinementCtx
 ) {
@@ -27,11 +38,27 @@ function validatePeriodKey(
         message: "periodKey must be a Sunday date in YYYY-MM-DD format for weekly goals",
       });
     }
-  } else if (!monthKeyRegex.test(periodKey)) {
+  } else if (periodType === "month") {
+    if (!monthKeyRegex.test(periodKey)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["periodKey"],
+        message: "periodKey must be in YYYY-MM format for monthly goals",
+      });
+    }
+  } else if (periodType === "year") {
+    if (!yearKeyRegex.test(periodKey)) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["periodKey"],
+        message: "periodKey must be in YYYY format for yearly goals",
+      });
+    }
+  } else if (!dateKeyRegex.test(periodKey)) {
     ctx.addIssue({
       code: z.ZodIssueCode.custom,
       path: ["periodKey"],
-      message: "periodKey must be in YYYY-MM format for monthly goals",
+      message: "periodKey must be in YYYY-MM-DD format for custom goals",
     });
   }
 }
@@ -40,17 +67,34 @@ const createGoalSchema = z
   .object({
     title: z.string().min(1, "Title is required").max(200, "Title too long"),
     note: z.string().max(1000, "Note too long").optional(),
-    periodType: z.enum(["week", "month"]),
+    periodType: z.enum(["week", "month", "year", "custom"]),
     periodKey: z.string(),
+    startDate: z.string().regex(dateKeyRegex).optional(),
+    endDate: z.string().regex(dateKeyRegex).optional(),
     parentGoalId: z.string().optional(),
   })
   .superRefine((data, ctx) => {
     validatePeriodKey(data.periodType, data.periodKey, ctx);
-    if (data.parentGoalId !== undefined && data.periodType !== "week") {
+    if (data.periodType === "custom") {
+      if (!data.startDate || !data.endDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["startDate"],
+          message: "Custom goals require a start and end date",
+        });
+      } else if (data.endDate < data.startDate) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["endDate"],
+          message: "End date must be on or after the start date",
+        });
+      }
+    }
+    if (data.parentGoalId !== undefined && expectedParentType(data.periodType) === null) {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
         path: ["parentGoalId"],
-        message: "Only weekly goals can link to a monthly goal",
+        message: "Only weekly and monthly goals can link to a parent goal",
       });
     }
   });
@@ -60,15 +104,21 @@ const updateGoalSchema = z.object({
   title: z.string().min(1).max(200).optional(),
   note: z.string().max(1000).nullable().optional(),
   status: z.enum(["active", "achieved", "dropped"]).optional(),
+  startDate: z.string().regex(dateKeyRegex).optional(),
+  endDate: z.string().regex(dateKeyRegex).optional(),
   parentGoalId: z.string().nullable().optional(),
 });
 
-async function findParentMonthlyGoal(parentGoalId: string, userId: string) {
+async function findParentGoal(
+  parentGoalId: string,
+  userId: string,
+  periodType: GoalPeriod
+) {
   if (!ObjectId.isValid(parentGoalId)) return null;
   return goalsCollection.findOne({
     _id: new ObjectId(parentGoalId),
     userId,
-    periodType: "month",
+    periodType,
   });
 }
 
@@ -113,10 +163,13 @@ export async function POST(request: NextRequest) {
 
     let parentGoalId: ObjectId | undefined;
     if (body.parentGoalId !== undefined) {
-      const parent = await findParentMonthlyGoal(body.parentGoalId, userId);
+      const parentType = expectedParentType(body.periodType);
+      const parent = parentType
+        ? await findParentGoal(body.parentGoalId, userId, parentType)
+        : null;
       if (!parent) {
         return NextResponse.json(
-          { error: "Parent goal not found or is not a monthly goal" },
+          { error: `Parent goal not found or is not a ${parentType ?? "valid"} goal` },
           { status: 400 }
         );
       }
@@ -128,6 +181,8 @@ export async function POST(request: NextRequest) {
       note: body.note,
       periodType: body.periodType,
       periodKey: body.periodKey,
+      startDate: body.periodType === "custom" ? body.startDate : undefined,
+      endDate: body.periodType === "custom" ? body.endDate : undefined,
       status: "active",
       parentGoalId,
       userId,
@@ -162,7 +217,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, note, parentGoalId, ...restUpdateData } = parseResult.data;
+    const { _id, note, parentGoalId, startDate, endDate, ...restUpdateData } = parseResult.data;
 
     if (!ObjectId.isValid(_id)) {
       return NextResponse.json({ error: "Invalid goal ID format" }, { status: 400 });
@@ -182,6 +237,31 @@ export async function PUT(request: NextRequest) {
       updateOperation.$set.note = note;
     }
 
+    // Custom-goal date range edits; keep periodKey pinned to the start date.
+    if (startDate !== undefined || endDate !== undefined) {
+      const goal = await goalsCollection.findOne({ _id: new ObjectId(_id), userId });
+      if (!goal) {
+        return NextResponse.json({ error: "Goal not found" }, { status: 404 });
+      }
+      if (goal.periodType !== "custom") {
+        return NextResponse.json(
+          { error: "Only custom goals have an editable date range" },
+          { status: 400 }
+        );
+      }
+      const nextStart = startDate ?? goal.startDate;
+      const nextEnd = endDate ?? goal.endDate;
+      if (!nextStart || !nextEnd || nextEnd < nextStart) {
+        return NextResponse.json(
+          { error: "End date must be on or after the start date" },
+          { status: 400 }
+        );
+      }
+      updateOperation.$set.startDate = nextStart;
+      updateOperation.$set.endDate = nextEnd;
+      updateOperation.$set.periodKey = nextStart;
+    }
+
     if (parentGoalId === null) {
       unset.parentGoalId = "";
     } else if (parentGoalId !== undefined) {
@@ -189,16 +269,17 @@ export async function PUT(request: NextRequest) {
       if (!goal) {
         return NextResponse.json({ error: "Goal not found" }, { status: 404 });
       }
-      if (goal.periodType !== "week") {
+      const parentType = expectedParentType(goal.periodType);
+      if (!parentType) {
         return NextResponse.json(
-          { error: "Only weekly goals can link to a monthly goal" },
+          { error: "Only weekly and monthly goals can link to a parent goal" },
           { status: 400 }
         );
       }
-      const parent = await findParentMonthlyGoal(parentGoalId, userId);
+      const parent = await findParentGoal(parentGoalId, userId, parentType);
       if (!parent) {
         return NextResponse.json(
-          { error: "Parent goal not found or is not a monthly goal" },
+          { error: `Parent goal not found or is not a ${parentType} goal` },
           { status: 400 }
         );
       }
