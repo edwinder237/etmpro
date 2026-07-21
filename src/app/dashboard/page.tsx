@@ -2228,6 +2228,16 @@ export default function HomePage() {
   // ordered by horizon. We surface the first few and link to the rest.
   const FOCUS_STACK_LIMIT = 3;
   const focusPeriodLabel: Record<GoalPeriodType, string> = { week: "Week", month: "Month", year: "Year", custom: "Custom" };
+  // Length of a custom goal's window in days, or null if not a dated custom goal.
+  const goalDurationDays = (goal: Goal): number | null => {
+    if (goal.periodType !== "custom" || !goal.startDate || !goal.endDate) return null;
+    return Math.round((new Date(goal.endDate).getTime() - new Date(goal.startDate).getTime()) / 86400000);
+  };
+  // Period tag for the focus stack — custom goals show their length ("90 days").
+  const goalTagLabel = (goal: Goal): string => {
+    const days = goalDurationDays(goal);
+    return days !== null ? `${days} days` : focusPeriodLabel[goal.periodType];
+  };
   const activeFocusGoals = (() => {
     const today = format(new Date(), "yyyy-MM-dd");
     const order: Record<GoalPeriodType, number> = { week: 0, month: 1, year: 2, custom: 3 };
@@ -2372,7 +2382,7 @@ export default function HomePage() {
                   return (
                     <div key={goal._id} onClick={() => setIsGoalsExpanded(true)} className="cursor-pointer">
                       <div className="flex items-baseline gap-2 md:justify-end">
-                        <span className="text-[9px] tracking-[0.1em] uppercase shrink-0" style={{ color: "var(--muted3)" }}>{focusPeriodLabel[goal.periodType]}</span>
+                        <span className="text-[9px] tracking-[0.1em] uppercase shrink-0" style={{ color: "var(--muted3)" }}>{goalTagLabel(goal)}</span>
                         <span style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[17px] leading-[1.2]">{goal.title}</span>
                       </div>
                       {counts && counts.total > 0 && (
@@ -3627,8 +3637,9 @@ export default function HomePage() {
             {goalsPanelGoals.map((goal) => {
               const counts = goalTaskCounts.get(goal._id);
               const parent = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
+              const durationDays = goalDurationDays(goal);
               const rangeLabel = goal.periodType === "custom" && goal.startDate && goal.endDate
-                ? `${format(new Date(goal.startDate), "MMM d")} – ${format(new Date(goal.endDate), "MMM d, yyyy")}`
+                ? `${durationDays} days · ${format(new Date(goal.startDate), "MMM d")} – ${format(new Date(goal.endDate), "MMM d, yyyy")}`
                 : null;
               return (
                 <div key={goal._id} className="flex items-start gap-2.5 rounded-[11px]" style={{ padding: "12px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", opacity: goal.status === "dropped" ? 0.55 : 1 }}>
