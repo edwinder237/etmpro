@@ -1234,8 +1234,17 @@ export default function HomePage() {
     for (const task of tasks) {
       if (!task.goalId) continue;
       const entry = counts.get(task.goalId) ?? { done: 0, total: 0 };
-      entry.total += 1;
-      if (task.status === "completed") entry.done += 1;
+      // A task with subtasks contributes its subtasks (the real unit of work);
+      // a standalone task contributes itself. Keeps goal progress meaningful
+      // when a goal is driven by one task's checklist.
+      const subtaskCount = task.subtaskCount ?? 0;
+      if (subtaskCount > 0) {
+        entry.total += subtaskCount;
+        entry.done += task.subtaskCompletedCount ?? 0;
+      } else {
+        entry.total += 1;
+        if (task.status === "completed") entry.done += 1;
+      }
       counts.set(task.goalId, entry);
     }
     return counts;
