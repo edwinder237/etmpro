@@ -17,6 +17,7 @@ import {
   Clock,
   ChevronLeft,
   ChevronRight,
+  ChevronDown,
   ArrowRight,
   Share2,
   Download,
@@ -194,6 +195,10 @@ export default function HomePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  // "Nest under task" picker (searchable + quadrant-filterable)
+  const [nestPickerOpen, setNestPickerOpen] = useState(false);
+  const [nestSearch, setNestSearch] = useState("");
+  const [nestQuadrantFilter, setNestQuadrantFilter] = useState<TaskQuadrant | "all">("all");
   const [editingTask, setEditingTask] = useState<Task | null>(null);
   const [darkMode, setDarkMode] = useState<boolean | null>(null);
   // Use dark mode as default during SSR/initial render to prevent flash
@@ -2141,6 +2146,9 @@ export default function HomePage() {
     setSubtasks([]);
     setNewSubtaskTitle("");
     cancelEditSubtask();
+    setNestPickerOpen(false);
+    setNestSearch("");
+    setNestQuadrantFilter("all");
   };
 
   const openModalForQuadrant = (quadrant: TaskQuadrant) => {
@@ -4094,26 +4102,76 @@ export default function HomePage() {
                 </div>
               )}
 
-              {editingTask && (editingTask.subtaskCount ?? 0) === 0 && (
-                <div>
-                  <label className="block text-sm font-medium mb-2 text-[var(--ink3)]">
-                    Nest under task (optional)
-                  </label>
-                  <select
-                    value={formData.linkedParentId}
-                    onChange={(e) => setFormData(prev => ({ ...prev, linkedParentId: e.target.value }))}
-                    className="w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)] bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                  >
-                    <option value="">Not nested — stays standalone</option>
-                    {tasks
-                      .filter(t => t._id !== editingTask._id && t.linkedParentId !== editingTask._id)
-                      .map(t => <option key={t._id} value={t._id}>{t.title}</option>)}
-                  </select>
-                  <p className="text-xs mt-1.5 text-[var(--muted)]">
-                    Shows this task in the chosen task&apos;s subtasks too; it still appears in its own quadrant, and completing it syncs both.
-                  </p>
-                </div>
-              )}
+              {editingTask && (editingTask.subtaskCount ?? 0) === 0 && (() => {
+                const selectedParent = formData.linkedParentId ? tasks.find(t => t._id === formData.linkedParentId) : undefined;
+                const nestCandidates = tasks
+                  .filter(t => t._id !== editingTask._id && t.linkedParentId !== editingTask._id)
+                  .filter(t => nestQuadrantFilter === "all" || t.quadrant === nestQuadrantFilter)
+                  .filter(t => t.title.toLowerCase().includes(nestSearch.trim().toLowerCase()));
+                const chooseNest = (id: string) => {
+                  setFormData(prev => ({ ...prev, linkedParentId: id }));
+                  setNestPickerOpen(false);
+                  setNestSearch("");
+                };
+                return (
+                  <div>
+                    <label className="block text-sm font-medium mb-2 text-[var(--ink3)]">
+                      Nest under task (optional)
+                    </label>
+                    <button type="button" onClick={() => setNestPickerOpen(o => !o)}
+                      className="w-full px-4 py-2 rounded-lg border flex items-center justify-between gap-2 text-left focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)] bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]">
+                      <span className={cn("text-sm truncate", !selectedParent && "text-[var(--muted)]")}>
+                        {selectedParent ? selectedParent.title : "Not nested — stays standalone"}
+                      </span>
+                      <ChevronDown className={cn("w-4 h-4 shrink-0 transition-transform", nestPickerOpen && "rotate-180")} style={{ color: "var(--muted)" }} />
+                    </button>
+                    {nestPickerOpen && (
+                      <div className="mt-2 rounded-lg border overflow-hidden" style={{ background: "var(--field)", borderColor: "var(--field-bd)" }}>
+                        <div className="p-2" style={{ borderBottom: "1px solid var(--line2)" }}>
+                          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md" style={{ background: "var(--tint)" }}>
+                            <Search className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+                            <input autoFocus type="text" value={nestSearch} onChange={(e) => setNestSearch(e.target.value)}
+                              placeholder="Search tasks…" className="flex-1 bg-transparent text-sm outline-none" style={{ color: "var(--ink)" }} />
+                          </div>
+                          <div className="flex flex-wrap gap-1 mt-2">
+                            <button type="button" onClick={() => setNestQuadrantFilter("all")}
+                              className="text-[11px] px-2.5 py-1 rounded-full" style={{ background: nestQuadrantFilter === "all" ? "var(--pill-active)" : "var(--chip)", color: nestQuadrantFilter === "all" ? "var(--btn-fg)" : "var(--ink3)" }}>All</button>
+                            {MATRIX_ORDER.map((q) => (
+                              <button key={q} type="button" onClick={() => setNestQuadrantFilter(q)}
+                                className="text-[11px] px-2.5 py-1 rounded-full flex items-center gap-1.5" style={{ background: nestQuadrantFilter === q ? "var(--pill-active)" : "var(--chip)", color: nestQuadrantFilter === q ? "var(--btn-fg)" : "var(--ink3)" }}>
+                                <span className="w-[6px] h-[6px] rounded-full" style={{ background: MATRIX_META[q].color }} />
+                                {MATRIX_META[q].name}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="max-h-[220px] overflow-y-auto py-1">
+                          <button type="button" onClick={() => chooseNest("")}
+                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--hover)]" style={{ color: "var(--ink2)" }}>
+                            <span className="w-[7px] h-[7px] shrink-0" />
+                            Not nested — stays standalone
+                            {!formData.linkedParentId && <CheckCircle2 className="w-3.5 h-3.5 ml-auto" style={{ color: "var(--accent)" }} />}
+                          </button>
+                          {nestCandidates.map((t) => (
+                            <button key={t._id} type="button" onClick={() => chooseNest(t._id)}
+                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--hover)]" style={{ color: "var(--ink2)" }}>
+                              <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: MATRIX_META[t.quadrant].color }} />
+                              <span className="truncate">{t.title}</span>
+                              {formData.linkedParentId === t._id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto shrink-0" style={{ color: "var(--accent)" }} />}
+                            </button>
+                          ))}
+                          {nestCandidates.length === 0 && (
+                            <div className="px-3 py-3 text-sm text-center" style={{ color: "var(--muted)" }}>No matching tasks</div>
+                          )}
+                        </div>
+                      </div>
+                    )}
+                    <p className="text-xs mt-1.5 text-[var(--muted)]">
+                      Shows this task in the chosen task&apos;s subtasks too; it still appears in its own quadrant, and completing it syncs both.
+                    </p>
+                  </div>
+                );
+              })()}
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
