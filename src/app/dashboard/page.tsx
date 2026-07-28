@@ -96,6 +96,7 @@ type GoalStatus = "active" | "achieved" | "dropped";
 interface Goal {
   _id: string;
   title: string;
+  icon?: string;
   note?: string;
   periodType: GoalPeriodType;
   periodKey: string;
@@ -197,6 +198,24 @@ function safeSetItem(key: string, value: string): void {
 }
 function safeRemoveItem(key: string): void {
   try { localStorage.removeItem(key); } catch { /* ignore */ }
+}
+
+// Curated markers for goals. Emoji stay distinguishable at the small size used
+// beside tasks in the matrix, where a monochrome icon set would not.
+const GOAL_ICONS = [
+  "🏃", "💪", "🧘", "🥗", "😴", "🩺",
+  "💍", "❤️", "🏡", "👨‍👩‍👧", "✈️", "🌱",
+  "💼", "📈", "🎯", "🧑‍💻", "📚", "✍️",
+  "💰", "🏦", "📊", "🧠", "🎨", "⭐",
+];
+
+// A goal's marker. Falls back to a leading emoji already typed into the title,
+// so goals written before icons existed still render one.
+const LEADING_EMOJI = /^\s*(\p{Extended_Pictographic}(?:\uFE0F)?(?:\u200D\p{Extended_Pictographic}(?:\uFE0F)?)*)/u;
+function goalIconOf(goal: { icon?: string; title: string } | undefined): string | undefined {
+  if (!goal) return undefined;
+  if (goal.icon?.trim()) return goal.icon;
+  return LEADING_EMOJI.exec(goal.title)?.[1];
 }
 
 // Task editor: attribute "chips". A chip reads as filled when the attribute is
@@ -376,7 +395,7 @@ export default function HomePage() {
   const [goalsPanelDate, setGoalsPanelDate] = useState(new Date());
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
-  const [goalFormData, setGoalFormData] = useState({ title: "", note: "", parentGoalId: "", startDate: "", endDate: "" });
+  const [goalFormData, setGoalFormData] = useState({ title: "", icon: "", note: "", parentGoalId: "", startDate: "", endDate: "" });
 
   // Subtask state (for edit modal)
   const [subtasks, setSubtasks] = useState<Task[]>([]);
@@ -1387,7 +1406,7 @@ export default function HomePage() {
   };
 
   const resetGoalForm = () => {
-    setGoalFormData({ title: "", note: "", parentGoalId: "", startDate: "", endDate: "" });
+    setGoalFormData({ title: "", icon: "", note: "", parentGoalId: "", startDate: "", endDate: "" });
     setEditingGoal(null);
     setShowGoalForm(false);
   };
@@ -1415,6 +1434,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: goalFormData.title.trim(),
+          icon: goalFormData.icon || undefined,
           note: goalFormData.note.trim() || undefined,
           periodType: goalsPanelPeriodType,
           periodKey: isCustomPeriod ? goalFormData.startDate : goalsPanelKey,
@@ -1448,6 +1468,7 @@ export default function HomePage() {
         body: JSON.stringify({
           _id: editingGoal._id,
           title: goalFormData.title.trim(),
+          icon: goalFormData.icon || null,
           note: goalFormData.note.trim() || null,
           ...(editingGoal.periodType === "week" || editingGoal.periodType === "month"
             ? { parentGoalId: goalFormData.parentGoalId || null }
@@ -1586,6 +1607,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: goal.title,
+          icon: goal.icon,
           note: goal.note,
           periodType: goal.periodType,
           periodKey: targetKey,
@@ -1609,6 +1631,7 @@ export default function HomePage() {
     setEditingGoal(goal);
     setGoalFormData({
       title: goal.title,
+      icon: goal.icon ?? "",
       note: goal.note ?? "",
       parentGoalId: goal.parentGoalId ?? "",
       startDate: goal.startDate ?? "",
@@ -3835,6 +3858,12 @@ export default function HomePage() {
                             <span className={cn("qcheck", nextAction.status === "completed" && "checked")} style={{ marginTop: 5 }} onClick={() => void handleToggleComplete(nextAction)} />
                             <div className="text-[17px] font-semibold cursor-pointer" onClick={() => void openTaskForEdit(nextAction)} style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
                               {nextAction.title}
+                              {goalIconOf(nextAction.goalId ? goalsById.get(nextAction.goalId) : undefined) && (
+                                <span className="inline-block align-middle ml-1.5 text-[14px] leading-none"
+                                  title={`Goal: ${goalsById.get(nextAction.goalId!)?.title ?? ""}`}>
+                                  {goalIconOf(goalsById.get(nextAction.goalId!))}
+                                </span>
+                              )}
                               {nextAction.linkedParentId && (
                                 <span className="inline-flex items-center align-middle ml-1.5" title={`Part of: ${linkedParentTitle(nextAction) ?? "another task"}`} style={{ color: "var(--muted3)" }}>
                                   <Link2 className="w-[14px] h-[14px]" />
@@ -3880,6 +3909,12 @@ export default function HomePage() {
                                     style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
                                     {t.title}
                                   </span>
+                                  {goalIconOf(t.goalId ? goalsById.get(t.goalId) : undefined) && (
+                                    <span className="shrink-0 text-[13px] leading-none"
+                                      title={`Goal: ${goalsById.get(t.goalId!)?.title ?? ""}`}>
+                                      {goalIconOf(goalsById.get(t.goalId!))}
+                                    </span>
+                                  )}
                                   {t.linkedParentId && (
                                     <span className="shrink-0 inline-flex items-center" title={`Part of: ${linkedParentTitle(t) ?? "another task"}`} style={{ color: "var(--muted3)" }}>
                                       <Link2 className="w-[13px] h-[13px]" />
@@ -4224,6 +4259,25 @@ export default function HomePage() {
                 <input type="text" placeholder="Why it matters · optional" value={goalFormData.note}
                   onChange={(e) => setGoalFormData((p) => ({ ...p, note: e.target.value }))}
                   className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                {/* marker — shown beside every task linked to this goal */}
+                <div className="mb-3">
+                  <div className="flex items-center justify-between mb-1.5">
+                    <span className="text-[11px] tracking-[0.06em] uppercase" style={{ color: "var(--muted5)" }}>Marker</span>
+                    {goalFormData.icon && (
+                      <button type="button" onClick={() => setGoalFormData((p) => ({ ...p, icon: "" }))}
+                        className="text-[11px]" style={{ color: "var(--accent)" }}>Clear</button>
+                    )}
+                  </div>
+                  <div className="flex flex-wrap gap-1">
+                    {GOAL_ICONS.map((emo) => (
+                      <button key={emo} type="button" onClick={() => setGoalFormData((p) => ({ ...p, icon: p.icon === emo ? "" : emo }))}
+                        className="w-[30px] h-[30px] rounded-[8px] text-[15px] leading-none flex items-center justify-center transition-colors"
+                        style={{ border: goalFormData.icon === emo ? "1px solid var(--accent)" : "1px solid var(--field-bd)", background: goalFormData.icon === emo ? "var(--chip)" : "var(--field)" }}>
+                        {emo}
+                      </button>
+                    ))}
+                  </div>
+                </div>
                 {isCustomPeriod && (
                   <div className="mb-3">
                     <div className="flex gap-2 mb-2">
