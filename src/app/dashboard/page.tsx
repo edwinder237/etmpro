@@ -14,6 +14,7 @@ import {
   X,
   CalendarDays,
   CalendarRange,
+  CalendarPlus,
   Clock,
   ChevronLeft,
   ChevronRight,
@@ -2304,15 +2305,21 @@ export default function HomePage() {
   const getOrderedQuadrantTasks = (quadrant: TaskQuadrant) => {
     const startToday = startOfDay(new Date());
     return [...getTasksByQuadrant(quadrant)].sort((a, b) => {
+      // Scheduled tasks (with a due date) always lead; unscheduled sink to the
+      // bottom — they still need a date.
+      const aSched = !!a.dueDate;
+      const bSched = !!b.dueDate;
+      if (aSched !== bSched) return aSched ? -1 : 1;
+      // Within a group, a manual sortOrder wins.
       const ao = a.sortOrder ?? Infinity;
       const bo = b.sortOrder ?? Infinity;
       if (ao !== bo) return ao - bo;
-      const aOver = a.dueDate && a.status !== "completed" && new Date(a.dueDate) < startToday ? 1 : 0;
-      const bOver = b.dueDate && b.status !== "completed" && new Date(b.dueDate) < startToday ? 1 : 0;
-      if (aOver !== bOver) return bOver - aOver;
-      if (a.dueDate && b.dueDate) return new Date(a.dueDate).getTime() - new Date(b.dueDate).getTime();
-      if (a.dueDate) return -1;
-      if (b.dueDate) return 1;
+      if (aSched) {
+        const aOver = a.status !== "completed" && new Date(a.dueDate!) < startToday ? 1 : 0;
+        const bOver = b.status !== "completed" && new Date(b.dueDate!) < startToday ? 1 : 0;
+        if (aOver !== bOver) return bOver - aOver;
+        return new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime();
+      }
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
   };
@@ -2326,6 +2333,32 @@ export default function HomePage() {
     const nextAction = sorted[idx];
     const upNext = sorted.filter((_, i) => i !== idx);
     return { nextAction, upNext };
+  };
+
+  // Give an unscheduled task a due date in one tap (defaults to 9am).
+  const handleQuickSchedule = async (task: Task, when: "today" | "tomorrow" | "nextWeek") => {
+    const base = when === "today" ? new Date() : when === "tomorrow" ? addDays(new Date(), 1) : addDays(new Date(), 7);
+    const due = new Date(base.getFullYear(), base.getMonth(), base.getDate(), 9, 0, 0, 0);
+    const iso = due.toISOString();
+    setTasks(prev => prev.map(t => t._id === task._id ? { ...t, dueDate: iso } : t));
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: task._id, dueDate: iso }),
+      });
+      if (res.ok) {
+        const updated = await res.json() as Task;
+        setTasks(prev => prev.map(t => t._id === updated._id ? { ...t, ...updated } : t));
+        toast.success(`Scheduled for ${format(due, "MMM d")}`);
+      } else {
+        void fetchTasks();
+        toast.error("Failed to schedule task");
+      }
+    } catch {
+      void fetchTasks();
+      toast.error("Failed to schedule task");
+    }
   };
 
   // Reorder a task within its quadrant. 'top' makes it the Next action.
@@ -2366,6 +2399,48 @@ export default function HomePage() {
   // Title of the task this one is soft-linked under (shown as a matrix hint), if any.
   const linkedParentTitle = (task: Task) =>
     task.linkedParentId ? tasks.find(t => t._id === task.linkedParentId)?.title : undefined;
+
+  // Red "Schedule" pill for tasks sitting in a quadrant without a due date —
+  // a nudge that they still need to be scheduled. One tap sets a date.
+  const renderScheduleButton = (task: Task, size: "sm" | "md" = "sm") => (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button
+          className={cn(
+            "shrink-0 inline-flex items-center gap-[4px] rounded-[6px] outline-none transition-colors",
+            size === "md" ? "text-[11px] px-[8px] py-[3px]" : "text-[10.5px] px-[7px] py-[2px]"
+          )}
+          style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}
+          title="Schedule this task"
+        >
+          <CalendarPlus className={size === "md" ? "w-[12px] h-[12px]" : "w-[11px] h-[11px]"} />
+          Schedule
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="end" sideOffset={5}
+          className="min-w-[160px] rounded-lg p-1.5 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]">
+          {([
+            ["today", "Today"],
+            ["tomorrow", "Tomorrow"],
+            ["nextWeek", "Next week"],
+          ] as const).map(([when, label]) => (
+            <DropdownMenu.Item key={when} onSelect={() => void handleQuickSchedule(task, when)}
+              className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
+              <CalendarDays className="w-4 h-4" style={{ color: "var(--muted2)" }} />
+              {label}
+            </DropdownMenu.Item>
+          ))}
+          <DropdownMenu.Separator className="h-px my-1 bg-[var(--line3)]" />
+          <DropdownMenu.Item onSelect={() => void openTaskForEdit(task)}
+            className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
+            <Calendar className="w-4 h-4" style={{ color: "var(--muted2)" }} />
+            Pick a date…
+          </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
 
   // Compact duration label for the matrix rows, e.g. 30 → "30m", 90 → "1h30".
   const formatShortDuration = (min?: number): string | null => {
@@ -3602,6 +3677,9 @@ export default function HomePage() {
                                 <span className="text-[12px] font-normal" style={{ color: "var(--muted4)" }}> · {formatShortDuration(nextAction.duration)}</span>
                               )}
                             </div>
+                            {!nextAction.dueDate && nextAction.status !== "completed" && (
+                              <span className="mt-[5px]">{renderScheduleButton(nextAction, "md")}</span>
+                            )}
                           </div>
                         </div>
                         {upNext.length > 0 && (
@@ -3626,6 +3704,7 @@ export default function HomePage() {
                                       {format(new Date(t.dueDate), "MMM d")}
                                     </span>
                                   )}
+                                  {!t.dueDate && t.status !== "completed" && renderScheduleButton(t)}
                                   {formatShortDuration(t.duration) && t.status !== "completed" && (
                                     <span className="text-[12px] font-normal shrink-0 inline-flex items-center gap-[3px] tabular-nums" style={{ color: "var(--muted4)" }}>
                                       <Clock className="w-[11px] h-[11px]" />{formatShortDuration(t.duration)}
