@@ -74,6 +74,7 @@ function validatePeriodKey(
 const createGoalSchema = z
   .object({
     title: z.string().min(1, "Title is required").max(200, "Title too long"),
+    icon: z.string().max(16, "Icon too long").optional(),
     note: z.string().max(1000, "Note too long").optional(),
     periodType: z.enum(["week", "month", "year", "custom"]),
     periodKey: z.string(),
@@ -110,6 +111,7 @@ const createGoalSchema = z
 const updateGoalSchema = z.object({
   _id: z.string().min(1, "Goal ID is required"),
   title: z.string().min(1).max(200).optional(),
+  icon: z.string().max(16).nullable().optional(),
   note: z.string().max(1000).nullable().optional(),
   status: z.enum(["active", "achieved", "dropped"]).optional(),
   pinned: z.boolean().optional(),
@@ -189,6 +191,7 @@ export async function POST(request: NextRequest) {
 
     const newGoal: Goal = {
       title: body.title,
+      icon: body.icon?.trim() ? body.icon : undefined,
       note: body.note,
       periodType: body.periodType,
       periodKey: body.periodKey,
@@ -228,7 +231,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, note, parentGoalId, periodType, periodKey, startDate, endDate, ...restUpdateData } = parseResult.data;
+    const { _id, note, icon, parentGoalId, periodType, periodKey, startDate, endDate, ...restUpdateData } = parseResult.data;
 
     if (!ObjectId.isValid(_id)) {
       return NextResponse.json({ error: "Invalid goal ID format" }, { status: 400 });
@@ -247,6 +250,13 @@ export async function PUT(request: NextRequest) {
       unset.note = "";
     } else if (note !== undefined) {
       updateOperation.$set.note = note;
+    }
+
+    // An empty or null icon clears it
+    if (icon === null || (icon !== undefined && !icon.trim())) {
+      unset.icon = "";
+    } else if (icon !== undefined) {
+      updateOperation.$set.icon = icon;
     }
 
     // Move a goal to a different period (Week/Month/Year/Custom). This resets

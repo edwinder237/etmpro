@@ -29,6 +29,7 @@ export type GoalStatus = "active" | "achieved" | "dropped";
 export interface Goal {
   _id?: ObjectId;
   title: string;
+  icon?: string;            // Emoji marker, shown beside tasks linked to this goal
   note?: string;
   periodType: GoalPeriodType;
   periodKey: string;        // week: Sunday start "YYYY-MM-DD"; month: "YYYY-MM"; year: "YYYY"; custom: start date "YYYY-MM-DD"
