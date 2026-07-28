@@ -3576,40 +3576,54 @@ export default function HomePage() {
                   </div>
                   <span className="text-[12px] whitespace-nowrap" style={{ color: "var(--muted)" }}>{routineDone} of {routineTotal} done</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-[18px]">
-                  {todaysChecklistItems.map((item, idx) => {
-                    const done = isChecklistItemCompletedToday(item);
-                    return (
-                      <div key={item._id} className="flex items-center gap-[10px]">
-                        <span className="text-[11px] tabular-nums w-[13px] text-right shrink-0" style={{ color: "var(--muted4)" }}>{idx + 1}</span>
-                        <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
-                        <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
-                        {item.description && renderDescriptionInfo(item.title, item.description)}
-                      </div>
-                    );
-                  })}
-                  {dueMaintenanceItems.map((m) => {
-                    const done = isMaintenanceDoneToday(m);
-                    const late = !done && maintenanceDaysLate(m) > 0;
-                    return (
-                      <div key={m._id} className="flex items-center gap-[10px]">
-                        <span className="w-[13px] shrink-0" />
-                        <span className={cn("qcheck", done && "checked")} onClick={() => { if (!done) void handleMarkMaintenanceDone(m._id); }} />
-                        <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{m.title}</span>
-                        {m.description && renderDescriptionInfo(m.title, m.description)}
-                        {!done && (
-                          late ? (
-                            <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
-                              Late{maintenanceDaysLate(m) > 1 ? ` ${maintenanceDaysLate(m)}d` : ""}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--muted5)", background: "var(--chip)" }}>Due</span>
-                          )
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                {/* Split into two explicit columns so the sequence runs down the
+                    first column before continuing in the second, rather than
+                    zig-zagging across rows. */}
+                {(() => {
+                  const rows = [
+                    ...todaysChecklistItems.map((item, idx) => {
+                      const done = isChecklistItemCompletedToday(item);
+                      return (
+                        <div key={item._id} className="flex items-center gap-[10px]">
+                          <span className="text-[11px] tabular-nums w-[15px] text-right shrink-0" style={{ color: "var(--muted4)" }}>{idx + 1}</span>
+                          <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
+                          <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
+                          {item.description && renderDescriptionInfo(item.title, item.description)}
+                        </div>
+                      );
+                    }),
+                    ...dueMaintenanceItems.map((m) => {
+                      const done = isMaintenanceDoneToday(m);
+                      const late = !done && maintenanceDaysLate(m) > 0;
+                      return (
+                        <div key={m._id} className="flex items-center gap-[10px]">
+                          <span className="w-[15px] shrink-0" />
+                          <span className={cn("qcheck", done && "checked")} onClick={() => { if (!done) void handleMarkMaintenanceDone(m._id); }} />
+                          <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{m.title}</span>
+                          {m.description && renderDescriptionInfo(m.title, m.description)}
+                          {!done && (
+                            late ? (
+                              <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
+                                Late{maintenanceDaysLate(m) > 1 ? ` ${maintenanceDaysLate(m)}d` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--muted5)", background: "var(--chip)" }}>Due</span>
+                            )
+                          )}
+                        </div>
+                      );
+                    }),
+                  ];
+                  const half = Math.ceil(rows.length / 2);
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-[18px]">
+                      <div className="flex flex-col gap-[18px]">{rows.slice(0, half)}</div>
+                      {rows.length > half && (
+                        <div className="flex flex-col gap-[18px]">{rows.slice(half)}</div>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
