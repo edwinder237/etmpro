@@ -7,6 +7,7 @@ import { z } from "zod";
 
 const createChecklistSchema = z.object({
   title: z.string().min(1, "Title is required").max(200, "Title too long"),
+  description: z.string().max(2000, "Description too long").optional(),
   frequency: z.enum(["daily", "weekly"]),
   daysOfWeek: z.array(z.number().int().min(0).max(6)).optional(),
 });
@@ -14,6 +15,7 @@ const createChecklistSchema = z.object({
 const updateChecklistSchema = z.object({
   _id: z.string().min(1, "Checklist item ID is required"),
   title: z.string().min(1).max(200).optional(),
+  description: z.string().max(2000).nullable().optional(),
   frequency: z.enum(["daily", "weekly"]).optional(),
   daysOfWeek: z.array(z.number().int().min(0).max(6)).nullable().optional(),
   sortOrder: z.number().int().min(0).optional(),
@@ -68,6 +70,7 @@ export async function POST(request: NextRequest) {
 
     const newItem: ChecklistItem = {
       title: body.title,
+      description: body.description?.trim() ? body.description : undefined,
       frequency: body.frequency,
       daysOfWeek: body.frequency === "weekly" ? (body.daysOfWeek ?? []) : undefined,
       completedDates: [],
@@ -104,7 +107,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, daysOfWeek, ...restUpdateData } = parseResult.data;
+    const { _id, daysOfWeek, description, ...restUpdateData } = parseResult.data;
 
     if (!ObjectId.isValid(_id)) {
       return NextResponse.json({ error: "Invalid checklist item ID format" }, { status: 400 });
@@ -116,11 +119,23 @@ export async function PUT(request: NextRequest) {
         updatedAt: new Date(),
       },
     };
+    const unset: Record<string, "" | true | 1> = {};
 
     if (daysOfWeek === null) {
-      updateOperation.$unset = { daysOfWeek: "" as const };
+      unset.daysOfWeek = "" as const;
     } else if (daysOfWeek !== undefined) {
       updateOperation.$set.daysOfWeek = daysOfWeek;
+    }
+
+    // An empty or null description clears it
+    if (description === null || (description !== undefined && !description.trim())) {
+      unset.description = "" as const;
+    } else if (description !== undefined) {
+      updateOperation.$set.description = description;
+    }
+
+    if (Object.keys(unset).length > 0) {
+      updateOperation.$unset = unset;
     }
 
     const result = await checklistItemsCollection.updateOne(

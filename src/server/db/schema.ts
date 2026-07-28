@@ -47,6 +47,7 @@ export type ChecklistFrequency = "daily" | "weekly";
 export interface ChecklistItem {
   _id?: ObjectId;
   title: string;
+  description?: string;        // Optional detail, shown on demand from the routine card
   frequency: ChecklistFrequency;
   daysOfWeek?: number[];       // 0=Sunday..6=Saturday, only for weekly
   completedDates: string[];    // Array of "YYYY-MM-DD" strings
@@ -59,6 +60,7 @@ export interface ChecklistItem {
 export interface MaintenanceItem {
   _id?: ObjectId;
   title: string;
+  description?: string;         // Optional detail, shown on demand from the routine card
   intervalDays: number;         // e.g. 90 = every 3 months, 365 = yearly
   lastCompletedDate?: string;   // ISO date "YYYY-MM-DD"
   nextDueDate: string;          // ISO date "YYYY-MM-DD"

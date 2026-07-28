@@ -34,7 +34,8 @@ import {
   Star,
   ArrowLeftRight,
   Unlink,
-  Link2
+  Link2,
+  Info
 } from "lucide-react";
 import {
   startOfWeek,
@@ -113,6 +114,7 @@ type ChecklistFrequency = "daily" | "weekly";
 interface ChecklistItem {
   _id: string;
   title: string;
+  description?: string;
   frequency: ChecklistFrequency;
   daysOfWeek?: number[];
   completedDates: string[];
@@ -124,6 +126,7 @@ interface ChecklistItem {
 interface MaintenanceItem {
   _id: string;
   title: string;
+  description?: string;
   intervalDays: number;
   lastCompletedDate?: string;
   nextDueDate: string;
@@ -321,7 +324,7 @@ export default function HomePage() {
   const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>([]);
   const [showMaintenanceForm, setShowMaintenanceForm] = useState(false);
   const [editingMaintenanceItem, setEditingMaintenanceItem] = useState<MaintenanceItem | null>(null);
-  const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", intervalDays: 90, nextDueDate: "" });
+  const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
   const [paymentsData, setPaymentsData] = useState<PaymentsDueData | null>(null);
   const [paymentsError, setPaymentsError] = useState(false);
   const [expandedPaymentAccounts, setExpandedPaymentAccounts] = useState<Set<string>>(new Set());
@@ -329,6 +332,7 @@ export default function HomePage() {
   const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null);
   const [checklistFormData, setChecklistFormData] = useState({
     title: "",
+    description: "",
     frequency: "daily" as ChecklistFrequency,
     daysOfWeek: [] as number[],
   });
@@ -1081,7 +1085,7 @@ export default function HomePage() {
   };
 
   const resetChecklistForm = () => {
-    setChecklistFormData({ title: "", frequency: "daily", daysOfWeek: [] });
+    setChecklistFormData({ title: "", description: "", frequency: "daily", daysOfWeek: [] });
     setEditingChecklistItem(null);
     setShowChecklistForm(false);
   };
@@ -1123,6 +1127,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: checklistFormData.title.trim(),
+          description: checklistFormData.description.trim() || undefined,
           frequency: checklistFormData.frequency,
           daysOfWeek: checklistFormData.frequency === "weekly" ? checklistFormData.daysOfWeek : undefined,
         }),
@@ -1150,6 +1155,7 @@ export default function HomePage() {
         body: JSON.stringify({
           _id: editingChecklistItem._id,
           title: checklistFormData.title.trim(),
+          description: checklistFormData.description.trim() || null,
           frequency: checklistFormData.frequency,
           daysOfWeek: checklistFormData.frequency === "weekly" ? checklistFormData.daysOfWeek : null,
         }),
@@ -1185,6 +1191,7 @@ export default function HomePage() {
     setEditingChecklistItem(item);
     setChecklistFormData({
       title: item.title,
+      description: item.description ?? "",
       frequency: item.frequency,
       daysOfWeek: item.daysOfWeek ?? [],
     });
@@ -1210,11 +1217,11 @@ export default function HomePage() {
       const res = await fetch("/api/maintenance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: maintenanceFormData.title.trim(), intervalDays: maintenanceFormData.intervalDays, nextDueDate: nextDue }),
+        body: JSON.stringify({ title: maintenanceFormData.title.trim(), description: maintenanceFormData.description.trim() || undefined, intervalDays: maintenanceFormData.intervalDays, nextDueDate: nextDue }),
       });
       if (res.ok) {
         await fetchMaintenanceItems();
-        setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+        setMaintenanceFormData({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
         setShowMaintenanceForm(false);
       }
     } catch { /* silently fail */ }
@@ -1229,13 +1236,14 @@ export default function HomePage() {
         body: JSON.stringify({
           _id: editingMaintenanceItem._id,
           title: maintenanceFormData.title.trim(),
+          description: maintenanceFormData.description.trim() || null,
           intervalDays: maintenanceFormData.intervalDays,
           ...(maintenanceFormData.nextDueDate ? { nextDueDate: maintenanceFormData.nextDueDate } : {}),
         }),
       });
       if (res.ok) {
         await fetchMaintenanceItems();
-        setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+        setMaintenanceFormData({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
         setEditingMaintenanceItem(null);
         setShowMaintenanceForm(false);
       }
@@ -1262,7 +1270,7 @@ export default function HomePage() {
   };
 
   const resetMaintenanceForm = () => {
-    setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+    setMaintenanceFormData({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
     setEditingMaintenanceItem(null);
     setShowMaintenanceForm(false);
   };
@@ -2511,6 +2519,26 @@ export default function HomePage() {
     </DropdownMenu.Root>
   );
 
+  // Small "i" affordance on a routine row — click to read that item's description.
+  const renderDescriptionInfo = (title: string, description: string) => (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button onClick={(e) => e.stopPropagation()} title="Show details"
+          className="shrink-0 p-0.5 rounded outline-none opacity-50 hover:opacity-100 transition-opacity"
+          style={{ color: "var(--muted2)" }}>
+          <Info className="w-[13px] h-[13px]" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="start" sideOffset={6}
+          className="max-w-[280px] rounded-[11px] p-3 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]">
+          <div className="text-[12.5px] font-semibold mb-1" style={{ color: "var(--ink)" }}>{title}</div>
+          <div className="text-[12.5px] whitespace-pre-wrap" style={{ color: "var(--ink3)" }}>{description}</div>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+
   // Compact duration label for the matrix rows, e.g. 30 → "30m", 90 → "1h30".
   const formatShortDuration = (min?: number): string | null => {
     if (!min || min <= 0) return null;
@@ -3556,6 +3584,7 @@ export default function HomePage() {
                         <span className="text-[11px] tabular-nums w-[13px] text-right shrink-0" style={{ color: "var(--muted4)" }}>{idx + 1}</span>
                         <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
                         <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
+                        {item.description && renderDescriptionInfo(item.title, item.description)}
                       </div>
                     );
                   })}
@@ -3567,6 +3596,7 @@ export default function HomePage() {
                         <span className="w-[13px] shrink-0" />
                         <span className={cn("qcheck", done && "checked")} onClick={() => { if (!done) void handleMarkMaintenanceDone(m._id); }} />
                         <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{m.title}</span>
+                        {m.description && renderDescriptionInfo(m.title, m.description)}
                         {!done && (
                           late ? (
                             <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
@@ -3955,6 +3985,9 @@ export default function HomePage() {
                         className="text-[12.5px] rounded-[9px] capitalize" style={{ padding: "7px 16px", fontWeight: checklistFormData.frequency === f ? 600 : 400, color: checklistFormData.frequency === f ? "var(--btn-fg)" : "var(--accent)", background: checklistFormData.frequency === f ? "var(--pill-active)" : "var(--chip)" }}>{f}</button>
                     ))}
                   </div>
+                  <textarea placeholder="Description · optional — shown from the routine card" value={checklistFormData.description} rows={2}
+                    onChange={(e) => setChecklistFormData((p) => ({ ...p, description: e.target.value }))}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-3 resize-y" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
                   {checklistFormData.frequency === "weekly" && (
                     <div className="flex gap-1.5 mb-3">
                       {DAY_LABELS.map((label, i) => (
@@ -3986,6 +4019,11 @@ export default function HomePage() {
                     <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>every {m.intervalDays} days · due {format(new Date(m.nextDueDate), "MMM d")}</div>
                   </div>
                   <button onClick={() => void handleMarkMaintenanceDone(m._id)} className="text-[12px] font-semibold" style={{ color: "var(--accent)" }}>Mark done</button>
+                  <button onClick={() => {
+                    setEditingMaintenanceItem(m);
+                    setMaintenanceFormData({ title: m.title, description: m.description ?? "", intervalDays: m.intervalDays, nextDueDate: m.nextDueDate });
+                    setShowMaintenanceForm(true);
+                  }} style={{ color: "var(--muted2)" }} className="p-0.5"><Edit3 className="w-[15px] h-[15px]" /></button>
                   <button onClick={() => void handleDeleteMaintenanceItem(m._id)} style={{ color: "var(--tag-fg)" }} className="p-0.5"><Trash2 className="w-[15px] h-[15px]" /></button>
                 </div>
               ))}
@@ -3994,6 +4032,9 @@ export default function HomePage() {
                   <input type="text" autoFocus placeholder="e.g. Replace furnace filter" value={maintenanceFormData.title}
                     onChange={(e) => setMaintenanceFormData((p) => ({ ...p, title: e.target.value }))}
                     className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                  <textarea placeholder="Description · optional — shown from the routine card" value={maintenanceFormData.description} rows={2}
+                    onChange={(e) => setMaintenanceFormData((p) => ({ ...p, description: e.target.value }))}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5 resize-y" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
                   <div className="flex flex-wrap gap-1.5 mb-2.5">
                     {INTERVAL_PRESETS.map((p) => (
                       <button key={p.label} onClick={() => setMaintenanceFormData((f) => ({ ...f, intervalDays: p.days }))}
