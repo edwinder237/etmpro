@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import {
   Search,
   Sun,
@@ -2400,7 +2400,11 @@ export default function HomePage() {
   const linkedParentTitle = (task: Task) =>
     task.linkedParentId ? tasks.find(t => t._id === task.linkedParentId)?.title : undefined;
 
-  // Red "Schedule" pill for tasks sitting in a quadrant without a due date —
+  // The Schedule quadrant is the one whose whole point is giving important work a
+  // date, so the "needs scheduling" nudge is scoped to it.
+  const SCHEDULE_QUADRANT: TaskQuadrant = "important-not-urgent";
+
+  // Red "Schedule" pill for Schedule-quadrant tasks without a due date —
   // a nudge that they still need to be scheduled. One tap sets a date.
   const renderScheduleButton = (task: Task, size: "sm" | "md" = "sm") => (
     <DropdownMenu.Root>
@@ -3677,7 +3681,7 @@ export default function HomePage() {
                                 <span className="text-[12px] font-normal" style={{ color: "var(--muted4)" }}> · {formatShortDuration(nextAction.duration)}</span>
                               )}
                             </div>
-                            {!nextAction.dueDate && nextAction.status !== "completed" && (
+                            {quadrant === SCHEDULE_QUADRANT && !nextAction.dueDate && nextAction.status !== "completed" && (
                               <span className="mt-[5px]">{renderScheduleButton(nextAction, "md")}</span>
                             )}
                           </div>
@@ -3686,8 +3690,20 @@ export default function HomePage() {
                           <div className="mt-4 pt-[15px]" style={{ borderTop: "1px solid var(--line2)" }}>
                             <div className="text-[10px] tracking-[0.12em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Up next</div>
                             <div className="flex flex-col gap-[11px]">
-                              {upNext.map((t, i) => (
-                                <div key={t._id} className="group flex items-center gap-[11px]">
+                              {upNext.map((t, i) => {
+                                // Unscheduled tasks sink below the dated ones; mark that
+                                // boundary once, the first time it's crossed.
+                                const prevScheduled = i === 0 ? !!nextAction?.dueDate : !!upNext[i - 1]?.dueDate;
+                                const showUnscheduledDivider = !t.dueDate && prevScheduled;
+                                return (
+                                <Fragment key={t._id}>
+                                {showUnscheduledDivider && (
+                                  <div className="flex items-center gap-2 pt-[7px] pb-[1px]">
+                                    <span className="text-[10px] tracking-[0.12em] uppercase shrink-0" style={{ color: "var(--muted4)" }}>Unscheduled</span>
+                                    <span className="flex-1 h-px" style={{ background: "var(--line2)" }} />
+                                  </div>
+                                )}
+                                <div className="group flex items-center gap-[11px]">
                                   <span className={cn("qcheck", t.status === "completed" && "checked")} onClick={() => void handleToggleComplete(t)} />
                                   <span className="text-[14px] cursor-pointer flex-1 min-w-0 truncate" onClick={() => void openTaskForEdit(t)}
                                     style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
@@ -3704,7 +3720,7 @@ export default function HomePage() {
                                       {format(new Date(t.dueDate), "MMM d")}
                                     </span>
                                   )}
-                                  {!t.dueDate && t.status !== "completed" && renderScheduleButton(t)}
+                                  {quadrant === SCHEDULE_QUADRANT && !t.dueDate && t.status !== "completed" && renderScheduleButton(t)}
                                   {formatShortDuration(t.duration) && t.status !== "completed" && (
                                     <span className="text-[12px] font-normal shrink-0 inline-flex items-center gap-[3px] tabular-nums" style={{ color: "var(--muted4)" }}>
                                       <Clock className="w-[11px] h-[11px]" />{formatShortDuration(t.duration)}
@@ -3736,7 +3752,9 @@ export default function HomePage() {
                                     </DropdownMenu.Portal>
                                   </DropdownMenu.Root>
                                 </div>
-                              ))}
+                                </Fragment>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
