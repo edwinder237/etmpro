@@ -199,6 +199,33 @@ function safeRemoveItem(key: string): void {
   try { localStorage.removeItem(key); } catch { /* ignore */ }
 }
 
+// Task editor: attribute "chips". A chip reads as filled when the attribute is
+// set and as a dashed "+ Add" affordance when it isn't.
+const CHIP_BASE = "inline-flex items-center gap-[7px] text-[13px] rounded-full px-[13px] py-[6px] outline-none transition-colors hover:brightness-[0.97]";
+const CHIP_SET = { background: "var(--chip)", border: "1px solid var(--field-bd)", color: "var(--ink2)" };
+const CHIP_UNSET = { border: "1px dashed var(--check-bd)", color: "var(--muted5)", background: "transparent" };
+const MENU_CLS = "min-w-[196px] max-w-[300px] rounded-[12px] p-1.5 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]";
+const MENU_ITEM = "flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]";
+
+const QUADRANT_SHORT: Record<TaskQuadrant, string> = {
+  "urgent-important": "Urgent & important",
+  "important-not-urgent": "Important, not urgent",
+  "urgent-not-important": "Urgent, not important",
+  "not-urgent-not-important": "Not urgent or important",
+};
+const PRIORITY_META: Record<TaskPriority, { label: string; color: string }> = {
+  high: { label: "High", color: "var(--q-do-first)" },
+  medium: { label: "Medium", color: "var(--q-schedule)" },
+  low: { label: "Low", color: "var(--q-eliminate)" },
+};
+const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120, 180, 240, 480];
+
+// "yyyy-MM-dd" → local Date (avoids the UTC shift of new Date("2026-07-28"))
+function parseYmd(s: string): Date {
+  const [y, m, d] = s.split("-").map(Number);
+  return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1);
+}
+
 // Per-quadrant "next action" choice: a task id pins that task as the headline,
 // NEXT_ACTION_CLEARED leaves the slot deliberately empty. Absent = auto-pick.
 const NEXT_ACTION_CLEARED = "__none__";
@@ -1906,6 +1933,24 @@ export default function HomePage() {
     addToCalendar({ title: formData.title, description: formData.description, startDate, endDate }, provider);
   };
 
+  // Delete the task being edited (its subtasks cascade server-side).
+  const handleDeleteTask = async (task: Task) => {
+    setTasks(prev => prev.filter(t => t._id !== task._id));
+    closeModal();
+    try {
+      const res = await fetch(`/api/tasks?id=${task._id}`, { method: "DELETE" });
+      if (res.ok) {
+        toast.success("Task deleted");
+      } else {
+        void fetchTasks();
+        toast.error("Failed to delete task");
+      }
+    } catch {
+      void fetchTasks();
+      toast.error("Failed to delete task");
+    }
+  };
+
   const handleToggleComplete = async (task: Task) => {
     try {
       setTaskOperationLoading(prev => ({ ...prev, [`toggle-${task._id}`]: true }));
@@ -3576,40 +3621,54 @@ export default function HomePage() {
                   </div>
                   <span className="text-[12px] whitespace-nowrap" style={{ color: "var(--muted)" }}>{routineDone} of {routineTotal} done</span>
                 </div>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-[18px]">
-                  {todaysChecklistItems.map((item, idx) => {
-                    const done = isChecklistItemCompletedToday(item);
-                    return (
-                      <div key={item._id} className="flex items-center gap-[10px]">
-                        <span className="text-[11px] tabular-nums w-[13px] text-right shrink-0" style={{ color: "var(--muted4)" }}>{idx + 1}</span>
-                        <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
-                        <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
-                        {item.description && renderDescriptionInfo(item.title, item.description)}
-                      </div>
-                    );
-                  })}
-                  {dueMaintenanceItems.map((m) => {
-                    const done = isMaintenanceDoneToday(m);
-                    const late = !done && maintenanceDaysLate(m) > 0;
-                    return (
-                      <div key={m._id} className="flex items-center gap-[10px]">
-                        <span className="w-[13px] shrink-0" />
-                        <span className={cn("qcheck", done && "checked")} onClick={() => { if (!done) void handleMarkMaintenanceDone(m._id); }} />
-                        <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{m.title}</span>
-                        {m.description && renderDescriptionInfo(m.title, m.description)}
-                        {!done && (
-                          late ? (
-                            <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
-                              Late{maintenanceDaysLate(m) > 1 ? ` ${maintenanceDaysLate(m)}d` : ""}
-                            </span>
-                          ) : (
-                            <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--muted5)", background: "var(--chip)" }}>Due</span>
-                          )
-                        )}
-                      </div>
-                    );
-                  })}
-                </div>
+                {/* Split into two explicit columns so the sequence runs down the
+                    first column before continuing in the second, rather than
+                    zig-zagging across rows. */}
+                {(() => {
+                  const rows = [
+                    ...todaysChecklistItems.map((item, idx) => {
+                      const done = isChecklistItemCompletedToday(item);
+                      return (
+                        <div key={item._id} className="flex items-center gap-[10px]">
+                          <span className="text-[11px] tabular-nums w-[15px] text-right shrink-0" style={{ color: "var(--muted4)" }}>{idx + 1}</span>
+                          <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
+                          <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
+                          {item.description && renderDescriptionInfo(item.title, item.description)}
+                        </div>
+                      );
+                    }),
+                    ...dueMaintenanceItems.map((m) => {
+                      const done = isMaintenanceDoneToday(m);
+                      const late = !done && maintenanceDaysLate(m) > 0;
+                      return (
+                        <div key={m._id} className="flex items-center gap-[10px]">
+                          <span className="w-[15px] shrink-0" />
+                          <span className={cn("qcheck", done && "checked")} onClick={() => { if (!done) void handleMarkMaintenanceDone(m._id); }} />
+                          <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{m.title}</span>
+                          {m.description && renderDescriptionInfo(m.title, m.description)}
+                          {!done && (
+                            late ? (
+                              <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
+                                Late{maintenanceDaysLate(m) > 1 ? ` ${maintenanceDaysLate(m)}d` : ""}
+                              </span>
+                            ) : (
+                              <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--muted5)", background: "var(--chip)" }}>Due</span>
+                            )
+                          )}
+                        </div>
+                      );
+                    }),
+                  ];
+                  const half = Math.ceil(rows.length / 2);
+                  return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-[18px]">
+                      <div className="flex flex-col gap-[18px]">{rows.slice(0, half)}</div>
+                      {rows.length > half && (
+                        <div className="flex flex-col gap-[18px]">{rows.slice(half)}</div>
+                      )}
+                    </div>
+                  );
+                })()}
               </>
             )}
           </div>
@@ -4353,45 +4412,42 @@ export default function HomePage() {
         <Plus className="w-5 h-5 md:w-6 md:h-6" />
       </button>
 
-      {/* Add Task Modal */}
+      {/* Task editor */}
       {isModalOpen && (
         <div className="fixed inset-0 flex items-center justify-center p-4 z-50" style={{ background: "var(--overlay)" }}>
-          <div className={cn(
-            "w-full max-w-md mx-4 max-h-[90vh] overflow-y-auto rounded-lg p-4 md:p-6",
-            "bg-[var(--drawer)] border border-[var(--drawer-bd)] text-[var(--ink)]"
-          )}>
-            <div className="flex items-center justify-between mb-4 md:mb-6">
-              <h2 className="text-lg md:text-xl font-semibold">
-                {editingTask ? "Edit Task" : "Add New Task"}
-              </h2>
+          <div className="w-full max-w-[520px] max-h-[90vh] flex flex-col rounded-[18px] overflow-hidden"
+            style={{ background: "var(--drawer)", border: "1px solid var(--drawer-bd)", color: "var(--ink)", boxShadow: "0 30px 70px -30px rgba(70,55,30,0.5)" }}>
+
+            {/* header */}
+            <div className="flex items-center justify-between shrink-0" style={{ padding: "15px 22px", borderBottom: "1px solid var(--line2)", background: "var(--form-bg)" }}>
+              <span className="text-[11px] tracking-[0.14em] uppercase" style={{ color: "var(--muted5)" }}>
+                {editingTask ? "Edit task" : "New task"}
+              </span>
               <div className="flex items-center gap-1">
                 {formData.dueDate && (
                   <DropdownMenu.Root>
                     <DropdownMenu.Trigger asChild>
-                      <button className="p-1.5 md:p-2 rounded-lg hover:bg-[var(--hover)] outline-none" title="Add to calendar / export iCal">
-                        <Share2 className="w-4 h-4 md:w-[18px] md:h-[18px]" style={{ color: "var(--muted5)" }} />
+                      <button className="p-1 rounded-lg hover:bg-[var(--hover)] outline-none" title="Add to calendar / export iCal">
+                        <Share2 className="w-[17px] h-[17px]" style={{ color: "var(--muted5)" }} />
                       </button>
                     </DropdownMenu.Trigger>
                     <DropdownMenu.Portal>
-                      <DropdownMenu.Content align="end" sideOffset={5}
-                        className="min-w-[180px] rounded-lg p-1.5 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]">
+                      <DropdownMenu.Content align="end" sideOffset={6} className={MENU_CLS}>
                         {([
                           { id: "google", label: "Google Calendar", color: "#ef4444" },
                           { id: "outlook", label: "Outlook.com", color: "var(--accent)" },
                           { id: "office365", label: "Office 365", color: "#2563eb" },
                           { id: "yahoo", label: "Yahoo Calendar", color: "#a855f7" },
                         ] as const).map((p) => (
-                          <DropdownMenu.Item key={p.id}
-                            className="flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]"
-                            onClick={() => { exportEditingTaskToCalendar(p.id); toast.success(`Opening ${p.label}`); }}>
+                          <DropdownMenu.Item key={p.id} className={MENU_ITEM}
+                            onSelect={() => { exportEditingTaskToCalendar(p.id); toast.success(`Opening ${p.label}`); }}>
                             <Calendar className="w-4 h-4" style={{ color: p.color }} />
                             {p.label}
                           </DropdownMenu.Item>
                         ))}
                         <DropdownMenu.Separator className="h-px my-1 bg-[var(--line3)]" />
-                        <DropdownMenu.Item
-                          className="flex items-center gap-2 px-3 py-2 rounded-md text-sm cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]"
-                          onClick={() => { exportEditingTaskToCalendar("ics"); toast.success("Downloading .ics file"); }}>
+                        <DropdownMenu.Item className={MENU_ITEM}
+                          onSelect={() => { exportEditingTaskToCalendar("ics"); toast.success("Downloading .ics file"); }}>
                           <Download className="w-4 h-4 text-[var(--muted)]" />
                           Download .ics
                         </DropdownMenu.Item>
@@ -4399,463 +4455,399 @@ export default function HomePage() {
                     </DropdownMenu.Portal>
                   </DropdownMenu.Root>
                 )}
-                <button
-                  onClick={closeModal}
-                  className={cn(
-                    "p-1.5 md:p-2 rounded-lg",
-                    "hover:bg-[var(--hover)]"
-                  )}
-                >
-                  <X className="w-4 h-4 md:w-5 md:h-5" />
+                <button onClick={closeModal} className="p-1 rounded-lg hover:bg-[var(--hover)]" style={{ color: "var(--muted5)" }}>
+                  <X className="w-[18px] h-[18px]" />
                 </button>
               </div>
             </div>
 
-            <div className="space-y-3 md:space-y-4">
-              <div>
-                <label className={cn("block text-sm font-medium mb-2",
-                  "text-[var(--ink3)]")}>
-                  Task Title
-                </label>
-                <input
-                  type="text"
-                  value={formData.title}
-                  onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
-                  placeholder="Enter task title..."
-                  className={cn(
-                    "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                    darkMode
-                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
-                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
-                  )}
-                />
-              </div>
+            {/* body */}
+            <div className="flex-1 overflow-y-auto" style={{ padding: "22px" }}>
+              <input
+                type="text"
+                autoFocus={!editingTask}
+                value={formData.title}
+                onChange={(e) => setFormData(prev => ({ ...prev, title: e.target.value }))}
+                placeholder="Task name"
+                className="w-full bg-transparent outline-none text-[24px] font-semibold leading-tight placeholder:text-[color:var(--muted3)]"
+                style={{ color: "var(--ink)" }}
+              />
+              <textarea
+                value={formData.description}
+                onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
+                placeholder="Add a description…"
+                rows={2}
+                className="w-full bg-transparent outline-none text-[14.5px] mt-2 resize-none placeholder:text-[color:var(--muted3)]"
+                style={{ color: "var(--ink3)" }}
+              />
 
-              <div>
-                <label className={cn("block text-sm font-medium mb-2",
-                  "text-[var(--ink3)]")}>
-                  Description
-                </label>
-                <textarea
-                  value={formData.description}
-                  onChange={(e) => setFormData(prev => ({ ...prev, description: e.target.value }))}
-                  placeholder="Add task description..."
-                  rows={3}
-                  className={cn(
-                    "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                    darkMode 
-                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
-                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
-                  )}
-                />
-              </div>
-
-              <div>
-                <label className={cn("block text-sm font-medium mb-2",
-                  "text-[var(--ink3)]")}>
-                  Quadrant
-                </label>
-                <select
-                  value={formData.quadrant}
-                  onChange={(e) => {
-                    const newQuadrant = e.target.value as TaskQuadrant;
-                    setFormData(prev => ({
-                      ...prev,
-                      quadrant: newQuadrant,
-                      priority: newQuadrant === "urgent-important" ? "high" : prev.priority
-                    }));
-                  }}
-                  className={cn(
-                    "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                    darkMode
-                      ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                      : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                  )}
-                >
-                  <option value="urgent-important">Urgent & Important</option>
-                  <option value="important-not-urgent">Important & Not Urgent</option>
-                  <option value="urgent-not-important">Urgent & Not Important</option>
-                  <option value="not-urgent-not-important">Not Urgent & Not Important</option>
-                </select>
-              </div>
-
-              {formData.quadrant !== "urgent-important" && (
-                <div>
-                  <label className={cn("block text-sm font-medium mb-2",
-                    "text-[var(--ink3)]")}>
-                    Priority
-                  </label>
-                  <select
-                    value={formData.priority}
-                    onChange={(e) => setFormData(prev => ({ ...prev, priority: e.target.value as TaskPriority }))}
-                    className={cn(
-                      "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                      darkMode
-                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                    )}
-                  >
-                    <option value="high">High Priority</option>
-                    <option value="medium">Medium Priority</option>
-                    <option value="low">Low Priority</option>
-                  </select>
-                </div>
-              )}
-
-              {(goals.length > 0 || formData.goalId) && (
-                <div>
-                  <label className={cn("block text-sm font-medium mb-2",
-                    "text-[var(--ink3)]")}>
-                    Goal (optional)
-                  </label>
-                  <select
-                    value={formData.goalId}
-                    onChange={(e) => setFormData(prev => ({ ...prev, goalId: e.target.value }))}
-                    className={cn(
-                      "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                      darkMode
-                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                    )}
-                  >
-                    {renderGoalSelectOptions(formData.goalId)}
-                  </select>
-                </div>
-              )}
-
-              {editingTask && (editingTask.subtaskCount ?? 0) === 0 && (() => {
-                const selectedParent = formData.linkedParentId ? tasks.find(t => t._id === formData.linkedParentId) : undefined;
-                const nestCandidates = tasks
-                  .filter(t => t._id !== editingTask._id && t.linkedParentId !== editingTask._id)
-                  .filter(t => nestQuadrantFilter === "all" || t.quadrant === nestQuadrantFilter)
-                  .filter(t => t.title.toLowerCase().includes(nestSearch.trim().toLowerCase()));
-                const chooseNest = (id: string) => {
-                  setFormData(prev => ({ ...prev, linkedParentId: id }));
-                  setNestPickerOpen(false);
-                  setNestSearch("");
-                };
-                return (
-                  <div>
-                    <label className="block text-sm font-medium mb-2 text-[var(--ink3)]">
-                      Nest under task (optional)
-                    </label>
-                    <button type="button" onClick={() => setNestPickerOpen(o => !o)}
-                      className="w-full px-4 py-2 rounded-lg border flex items-center justify-between gap-2 text-left focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)] bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]">
-                      <span className={cn("text-sm truncate", !selectedParent && "text-[var(--muted)]")}>
-                        {selectedParent ? selectedParent.title : "Not nested — stays standalone"}
-                      </span>
-                      <ChevronDown className={cn("w-4 h-4 shrink-0 transition-transform", nestPickerOpen && "rotate-180")} style={{ color: "var(--muted)" }} />
-                    </button>
-                    {nestPickerOpen && (
-                      <div className="mt-2 rounded-lg border overflow-hidden" style={{ background: "var(--field)", borderColor: "var(--field-bd)" }}>
-                        <div className="p-2" style={{ borderBottom: "1px solid var(--line2)" }}>
-                          <div className="flex items-center gap-2 px-2 py-1.5 rounded-md" style={{ background: "var(--tint)" }}>
-                            <Search className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
-                            <input autoFocus type="text" value={nestSearch} onChange={(e) => setNestSearch(e.target.value)}
-                              placeholder="Search tasks…" className="flex-1 bg-transparent text-sm outline-none" style={{ color: "var(--ink)" }} />
-                          </div>
-                          <div className="flex flex-wrap gap-1 mt-2">
-                            <button type="button" onClick={() => setNestQuadrantFilter("all")}
-                              className="text-[11px] px-2.5 py-1 rounded-full" style={{ background: nestQuadrantFilter === "all" ? "var(--pill-active)" : "var(--chip)", color: nestQuadrantFilter === "all" ? "var(--btn-fg)" : "var(--ink3)" }}>All</button>
-                            {MATRIX_ORDER.map((q) => (
-                              <button key={q} type="button" onClick={() => setNestQuadrantFilter(q)}
-                                className="text-[11px] px-2.5 py-1 rounded-full flex items-center gap-1.5" style={{ background: nestQuadrantFilter === q ? "var(--pill-active)" : "var(--chip)", color: nestQuadrantFilter === q ? "var(--btn-fg)" : "var(--ink3)" }}>
-                                <span className="w-[6px] h-[6px] rounded-full" style={{ background: MATRIX_META[q].color }} />
-                                {MATRIX_META[q].name}
-                              </button>
-                            ))}
-                          </div>
-                        </div>
-                        <div className="max-h-[220px] overflow-y-auto py-1">
-                          <button type="button" onClick={() => chooseNest("")}
-                            className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--hover)]" style={{ color: "var(--ink2)" }}>
-                            <span className="w-[7px] h-[7px] shrink-0" />
-                            Not nested — stays standalone
-                            {!formData.linkedParentId && <CheckCircle2 className="w-3.5 h-3.5 ml-auto" style={{ color: "var(--accent)" }} />}
-                          </button>
-                          {nestCandidates.map((t) => (
-                            <button key={t._id} type="button" onClick={() => chooseNest(t._id)}
-                              className="w-full flex items-center gap-2 px-3 py-2 text-sm text-left hover:bg-[var(--hover)]" style={{ color: "var(--ink2)" }}>
-                              <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: MATRIX_META[t.quadrant].color }} />
-                              <span className="truncate">{t.title}</span>
-                              {formData.linkedParentId === t._id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto shrink-0" style={{ color: "var(--accent)" }} />}
-                            </button>
-                          ))}
-                          {nestCandidates.length === 0 && (
-                            <div className="px-3 py-3 text-sm text-center" style={{ color: "var(--muted)" }}>No matching tasks</div>
-                          )}
-                        </div>
-                      </div>
-                    )}
-                    <p className="text-xs mt-1.5 text-[var(--muted)]">
-                      Shows this task in the chosen task&apos;s subtasks too; it still appears in its own quadrant, and completing it syncs both.
-                    </p>
-                  </div>
-                );
-              })()}
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className={cn("block text-sm font-medium mb-2",
-                    "text-[var(--ink3)]")}>
-                    Due Date
-                  </label>
-                  <div className="relative">
-                    <input
-                      type="date"
-                      min={format(new Date(), "yyyy-MM-dd")}
-                      value={formData.dueDate}
-                      onChange={(e) => {
-                        // Ignore past dates — scheduling is forward-only
-                        if (e.target.value && e.target.value < format(new Date(), "yyyy-MM-dd")) return;
-                        setFormData(prev => ({ ...prev, dueDate: e.target.value }));
-                      }}
-                      className={cn(
-                        "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                        darkMode
-                          ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                          : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                      )}
-                    />
-                    {formData.dueDate && (
-                      <button
-                        type="button"
-                        onClick={() => setFormData(prev => ({ ...prev, dueDate: "", dueTime: "12:00" }))}
-                        className={cn(
-                          "absolute right-8 top-1/2 -translate-y-1/2 p-1 rounded-full transition-colors",
-                          "hover:bg-[var(--hover)] text-[var(--muted2)]"
-                        )}
-                      >
-                        <X className="w-4 h-4" />
+              {/* attribute chips */}
+              <div className="flex flex-wrap gap-2 mt-3">
+                {/* priority — urgent & important is always high, so no choice to make */}
+                {formData.quadrant !== "urgent-important" && (
+                  <DropdownMenu.Root>
+                    <DropdownMenu.Trigger asChild>
+                      <button className={CHIP_BASE} style={CHIP_SET}>
+                        <span className="w-[8px] h-[8px] rounded-full shrink-0" style={{ background: PRIORITY_META[formData.priority].color }} />
+                        {PRIORITY_META[formData.priority].label}
                       </button>
-                    )}
-                  </div>
-                </div>
-                <div>
-                  <label className={cn("block text-sm font-medium mb-2",
-                    "text-[var(--ink3)]")}>
-                    Time
-                  </label>
-                  <input
-                    type="time"
-                    value={formData.dueTime}
-                    onChange={(e) => setFormData(prev => ({ ...prev, dueTime: e.target.value }))}
-                    disabled={!formData.dueDate}
-                    className={cn(
-                      "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                      darkMode
-                        ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] disabled:opacity-50"
-                        : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] disabled:opacity-50"
-                    )}
-                  />
-                </div>
-              </div>
-            </div>
-
-            {/* Duration */}
-            <div>
-              <label className={cn("block text-sm font-medium mb-2",
-                "text-[var(--ink3)]")}>
-                Duration (minutes)
-              </label>
-              <select
-                value={formData.duration}
-                onChange={(e) => setFormData(prev => ({ ...prev, duration: e.target.value ? Number(e.target.value) : "" }))}
-                className={cn(
-                  "w-full px-4 py-2 rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                  darkMode
-                    ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                    : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
+                    </DropdownMenu.Trigger>
+                    <DropdownMenu.Portal>
+                      <DropdownMenu.Content align="start" sideOffset={6} className={MENU_CLS}>
+                        {(["high", "medium", "low"] as const).map((p) => (
+                          <DropdownMenu.Item key={p} className={MENU_ITEM}
+                            onSelect={() => setFormData(prev => ({ ...prev, priority: p }))}>
+                            <span className="w-[8px] h-[8px] rounded-full shrink-0" style={{ background: PRIORITY_META[p].color }} />
+                            {PRIORITY_META[p].label} priority
+                          </DropdownMenu.Item>
+                        ))}
+                      </DropdownMenu.Content>
+                    </DropdownMenu.Portal>
+                  </DropdownMenu.Root>
                 )}
-              >
-                <option value="">No duration</option>
-                <option value="15">15 minutes</option>
-                <option value="30">30 minutes</option>
-                <option value="45">45 minutes</option>
-                <option value="60">1 hour</option>
-                <option value="90">1.5 hours</option>
-                <option value="120">2 hours</option>
-                <option value="180">3 hours</option>
-                <option value="240">4 hours</option>
-                <option value="480">8 hours</option>
-              </select>
-            </div>
 
-            {/* Subtasks Section - Only show when editing a parent task */}
-            {editingTask && !editingTask.parentTaskId && (
-              <div className={cn("mt-4 pt-4 border-t", "border-[var(--line2)]")}>
-                <div className="flex items-center justify-between mb-3">
-                  <label className={cn("text-sm font-medium", "text-[var(--ink3)]")}>
-                    Subtasks
-                  </label>
-                  {(subtasks.length > 0 || (editingTask.subtaskCount ?? 0) > 0) && (
-                    <span className={cn("text-xs", "text-[var(--muted)]")}>
-                      {subtasks.filter(s => s.status === "completed").length}/{subtasks.length} completed
-                    </span>
-                  )}
-                </div>
+                {/* quadrant */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button className={CHIP_BASE} style={CHIP_SET}>
+                      <span className="w-[8px] h-[8px] rounded-[2px] shrink-0" style={{ background: MATRIX_META[formData.quadrant].color }} />
+                      {QUADRANT_SHORT[formData.quadrant]}
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content align="start" sideOffset={6} className={MENU_CLS}>
+                      {MATRIX_ORDER.map((q) => (
+                        <DropdownMenu.Item key={q} className={MENU_ITEM}
+                          onSelect={() => setFormData(prev => ({ ...prev, quadrant: q, priority: q === "urgent-important" ? "high" : prev.priority }))}>
+                          <span className="w-[8px] h-[8px] rounded-[2px] shrink-0" style={{ background: MATRIX_META[q].color }} />
+                          {QUADRANT_SHORT[q]}
+                        </DropdownMenu.Item>
+                      ))}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
 
-                {/* Subtask List */}
-                {subtasksLoading ? (
-                  <div className="space-y-2 mb-3">
-                    {[1, 2, 3].map((i) => (
-                      <div
-                        key={i}
-                        className={cn(
-                          "flex items-center gap-2 p-2 rounded-lg",
-                          "bg-[var(--tint)]"
-                        )}
-                      >
-                        <div className={cn("w-4 h-4 rounded-full animate-pulse", "bg-[var(--line2)]")} />
-                        <div className={cn("flex-1 h-4 rounded animate-pulse", "bg-[var(--line2)]")} />
+                {/* due date + time */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button className={CHIP_BASE} style={formData.dueDate ? CHIP_SET : CHIP_UNSET}>
+                      {formData.dueDate ? (
+                        <>
+                          <CalendarDays className="w-[13px] h-[13px] shrink-0" />
+                          {format(parseYmd(formData.dueDate), "MMM d")}
+                        </>
+                      ) : "+ Due date"}
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content align="start" sideOffset={6} className={MENU_CLS}>
+                      {([["today", "Today"], ["tomorrow", "Tomorrow"], ["nextWeek", "Next week"]] as const).map(([when, label]) => (
+                        <DropdownMenu.Item key={when} className={MENU_ITEM}
+                          onSelect={() => {
+                            const base = when === "today" ? new Date() : when === "tomorrow" ? addDays(new Date(), 1) : addDays(new Date(), 7);
+                            setFormData(prev => ({ ...prev, dueDate: format(base, "yyyy-MM-dd") }));
+                          }}>
+                          <CalendarDays className="w-4 h-4" style={{ color: "var(--muted2)" }} />
+                          {label}
+                        </DropdownMenu.Item>
+                      ))}
+                      <DropdownMenu.Separator className="h-px my-1 bg-[var(--line3)]" />
+                      <div className="p-1.5 flex flex-col gap-2" onKeyDown={(e) => e.stopPropagation()}>
+                        <input type="date" min={format(new Date(), "yyyy-MM-dd")} value={formData.dueDate}
+                          onChange={(e) => {
+                            if (e.target.value && e.target.value < format(new Date(), "yyyy-MM-dd")) return;
+                            setFormData(prev => ({ ...prev, dueDate: e.target.value }));
+                          }}
+                          className="w-full text-[13px] rounded-[9px] outline-none" style={{ padding: "8px 11px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                        <input type="time" value={formData.dueTime} disabled={!formData.dueDate}
+                          onChange={(e) => setFormData(prev => ({ ...prev, dueTime: e.target.value }))}
+                          className="w-full text-[13px] rounded-[9px] outline-none disabled:opacity-50" style={{ padding: "8px 11px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
                       </div>
-                    ))}
-                  </div>
-                ) : (
-                  <div className="space-y-2 mb-3">
-                    {subtasks.map((subtask) => (
-                      <div
-                        key={subtask._id}
-                        className={cn(
-                          "flex items-center gap-2 p-2 rounded-lg",
-                          "bg-[var(--tint)]"
-                        )}
-                      >
-                        <button
-                          onClick={() => handleToggleSubtaskComplete(subtask)}
-                          className={cn(
-                            "rounded-full transition-colors flex-shrink-0",
-                            subtask.status === "completed" ? "text-[var(--accent)]" : "text-[var(--muted3)]"
-                          )}
-                        >
-                          {subtask.status === "completed" ? (
-                            <CheckCircle2 className="w-4 h-4" />
-                          ) : (
-                            <div className="w-4 h-4 rounded-full border-2 border-current" />
-                          )}
+                      {formData.dueDate && (
+                        <DropdownMenu.Item className={MENU_ITEM}
+                          onSelect={() => setFormData(prev => ({ ...prev, dueDate: "", dueTime: "12:00" }))}>
+                          <X className="w-4 h-4" style={{ color: "var(--muted2)" }} />
+                          Clear date
+                        </DropdownMenu.Item>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+
+                {/* duration */}
+                <DropdownMenu.Root>
+                  <DropdownMenu.Trigger asChild>
+                    <button className={CHIP_BASE} style={typeof formData.duration === "number" ? CHIP_SET : CHIP_UNSET}>
+                      {typeof formData.duration === "number" ? (
+                        <>
+                          <Clock className="w-[13px] h-[13px] shrink-0" />
+                          {formatShortDuration(formData.duration)}
+                        </>
+                      ) : "+ Duration"}
+                    </button>
+                  </DropdownMenu.Trigger>
+                  <DropdownMenu.Portal>
+                    <DropdownMenu.Content align="start" sideOffset={6} className={MENU_CLS}>
+                      {DURATION_OPTIONS.map((min) => (
+                        <DropdownMenu.Item key={min} className={MENU_ITEM}
+                          onSelect={() => setFormData(prev => ({ ...prev, duration: min }))}>
+                          <Clock className="w-4 h-4" style={{ color: "var(--muted2)" }} />
+                          {formatShortDuration(min)}
+                        </DropdownMenu.Item>
+                      ))}
+                      {typeof formData.duration === "number" && (
+                        <>
+                          <DropdownMenu.Separator className="h-px my-1 bg-[var(--line3)]" />
+                          <DropdownMenu.Item className={MENU_ITEM}
+                            onSelect={() => setFormData(prev => ({ ...prev, duration: "" }))}>
+                            <X className="w-4 h-4" style={{ color: "var(--muted2)" }} />
+                            No duration
+                          </DropdownMenu.Item>
+                        </>
+                      )}
+                    </DropdownMenu.Content>
+                  </DropdownMenu.Portal>
+                </DropdownMenu.Root>
+
+                {/* goal */}
+                {(() => {
+                  const today = format(new Date(), "yyyy-MM-dd");
+                  const options = [
+                    ...currentWeekGoals.filter(g => g.status === "active"),
+                    ...currentMonthGoals.filter(g => g.status === "active"),
+                    ...currentYearGoals.filter(g => g.status === "active"),
+                    ...goals.filter(g => g.periodType === "custom" && g.status === "active" && (g.startDate ?? "") <= today && (g.endDate ?? "") >= today),
+                  ];
+                  const selected = formData.goalId ? goalsById.get(formData.goalId) : undefined;
+                  if (options.length === 0 && !selected) return null;
+                  return (
+                    <DropdownMenu.Root>
+                      <DropdownMenu.Trigger asChild>
+                        <button className={cn(CHIP_BASE, "max-w-[220px]")} style={selected ? CHIP_SET : CHIP_UNSET}>
+                          {selected ? (
+                            <>
+                              <Star className="w-[13px] h-[13px] shrink-0" style={{ fill: "var(--accent)", color: "var(--accent)" }} />
+                              <span className="truncate">{selected.title}</span>
+                            </>
+                          ) : "+ Goal"}
                         </button>
-                        {editingSubtaskId === subtask._id ? (
-                          <input
-                            type="text"
-                            autoFocus
-                            value={editingSubtaskTitle}
-                            onChange={(e) => setEditingSubtaskTitle(e.target.value)}
-                            onBlur={() => void handleUpdateSubtaskTitle(subtask._id)}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") {
-                                e.preventDefault();
-                                void handleUpdateSubtaskTitle(subtask._id);
-                              } else if (e.key === "Escape") {
-                                e.preventDefault();
-                                cancelEditSubtask();
-                              }
-                            }}
-                            className={cn(
-                              "flex-1 text-sm px-2 py-1 rounded border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                              isDarkMode ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]" : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)]"
-                            )}
-                          />
-                        ) : (
-                          <span
-                            onClick={() => startEditSubtask(subtask)}
-                            className={cn(
-                              "flex-1 text-sm cursor-text",
-                              subtask.status === "completed" && "line-through opacity-60"
-                            )}
-                          >
-                            {subtask.title}
-                            {subtask.linkedParentId && (
-                              <span className="ml-2 text-[10px] px-[6px] py-px rounded-[5px] align-middle" style={{ color: "var(--accent)", background: "var(--chip)" }}>linked</span>
-                            )}
-                          </span>
-                        )}
-                        {editingSubtaskId !== subtask._id && !subtask.linkedParentId && (
-                          <button
-                            onClick={() => startEditSubtask(subtask)}
-                            className={cn(
-                              "p-1 rounded transition-colors flex-shrink-0",
-                              "hover:bg-[var(--hover)] text-[var(--muted2)]"
-                            )}
-                            aria-label="Edit subtask"
-                          >
-                            <Edit3 className="w-3 h-3" />
-                          </button>
-                        )}
-                        {subtask.linkedParentId ? (
-                          <button
-                            onClick={() => void handleUnlinkSubtask(subtask)}
-                            className="p-1 rounded transition-colors flex-shrink-0 hover:bg-[var(--hover)] text-[var(--muted2)]"
-                            aria-label="Unlink task"
-                            title="Unlink (keeps the task in its quadrant)"
-                          >
-                            <Unlink className="w-3 h-3" />
-                          </button>
-                        ) : (
-                          <button
-                            onClick={() => handleDeleteSubtask(subtask._id)}
-                            className={cn(
-                              "p-1 rounded transition-colors flex-shrink-0",
-                              "hover:bg-[var(--tag-bg)] text-[var(--tag-fg)]"
-                            )}
-                          >
-                            <Trash2 className="w-3 h-3" />
-                          </button>
-                        )}
-                      </div>
-                    ))}
-                  </div>
-                )}
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content align="start" sideOffset={6} className={MENU_CLS}>
+                          {selected && !options.some(g => g._id === selected._id) && (
+                            <DropdownMenu.Item className={MENU_ITEM} onSelect={() => { /* keep */ }}>
+                              <Star className="w-4 h-4" style={{ fill: "var(--accent)", color: "var(--accent)" }} />
+                              <span className="truncate">{goalOptionLabel(selected)}</span>
+                            </DropdownMenu.Item>
+                          )}
+                          {options.map((g) => (
+                            <DropdownMenu.Item key={g._id} className={MENU_ITEM}
+                              onSelect={() => setFormData(prev => ({ ...prev, goalId: g._id }))}>
+                              <Star className="w-4 h-4 shrink-0" style={{ color: formData.goalId === g._id ? "var(--accent)" : "var(--muted2)", fill: formData.goalId === g._id ? "var(--accent)" : "none" }} />
+                              <span className="truncate">{g.title}</span>
+                            </DropdownMenu.Item>
+                          ))}
+                          {formData.goalId && (
+                            <>
+                              <DropdownMenu.Separator className="h-px my-1 bg-[var(--line3)]" />
+                              <DropdownMenu.Item className={MENU_ITEM} onSelect={() => setFormData(prev => ({ ...prev, goalId: "" }))}>
+                                <X className="w-4 h-4" style={{ color: "var(--muted2)" }} />
+                                No goal
+                              </DropdownMenu.Item>
+                            </>
+                          )}
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  );
+                })()}
 
-                {/* Add Subtask Input */}
-                <div className="flex gap-2">
-                  <input
-                    type="text"
-                    placeholder="Add a subtask..."
-                    value={newSubtaskTitle}
-                    onChange={(e) => setNewSubtaskTitle(e.target.value)}
-                    onKeyDown={(e) => {
-                      if (e.key === "Enter" && newSubtaskTitle.trim()) {
-                        e.preventDefault();
-                        void handleAddSubtask();
-                      }
-                    }}
-                    className={cn(
-                      "flex-1 px-3 py-2 text-sm rounded-lg border focus:outline-none focus:ring-2 focus:ring-[var(--pill-active)]",
-                      isDarkMode ? "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]" : "bg-[var(--field)] border-[var(--field-bd)] text-[var(--ink)] placeholder-[var(--muted)]"
-                    )}
-                  />
-                  <button
-                    onClick={() => void handleAddSubtask()}
-                    disabled={!newSubtaskTitle.trim()}
-                    className="px-3 py-2 bg-[var(--btn-primary)] text-[var(--btn-fg)] rounded-lg text-sm hover:brightness-95 disabled:opacity-50 disabled:cursor-not-allowed"
-                  >
-                    <Plus className="w-4 h-4" />
-                  </button>
-                </div>
+                {/* nest under another task — only for tasks that aren't parents themselves */}
+                {editingTask && (editingTask.subtaskCount ?? 0) === 0 && (() => {
+                  const selectedParent = formData.linkedParentId ? tasks.find(t => t._id === formData.linkedParentId) : undefined;
+                  const nestCandidates = tasks
+                    .filter(t => t._id !== editingTask._id && t.linkedParentId !== editingTask._id)
+                    .filter(t => nestQuadrantFilter === "all" || t.quadrant === nestQuadrantFilter)
+                    .filter(t => t.title.toLowerCase().includes(nestSearch.trim().toLowerCase()));
+                  return (
+                    <DropdownMenu.Root onOpenChange={(o) => { if (!o) setNestSearch(""); }}>
+                      <DropdownMenu.Trigger asChild>
+                        <button className={cn(CHIP_BASE, "max-w-[220px]")} style={selectedParent ? CHIP_SET : CHIP_UNSET}>
+                          {selectedParent ? (
+                            <>
+                              <Link2 className="w-[13px] h-[13px] shrink-0" />
+                              <span className="truncate">{selectedParent.title}</span>
+                            </>
+                          ) : "+ Nest under"}
+                        </button>
+                      </DropdownMenu.Trigger>
+                      <DropdownMenu.Portal>
+                        <DropdownMenu.Content align="start" sideOffset={6} className="w-[300px] rounded-[12px] p-0 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)] overflow-hidden">
+                          <div className="p-2" style={{ borderBottom: "1px solid var(--line2)" }} onKeyDown={(e) => e.stopPropagation()}>
+                            <div className="flex items-center gap-2 px-2 py-1.5 rounded-md" style={{ background: "var(--tint)" }}>
+                              <Search className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+                              <input type="text" value={nestSearch} onChange={(e) => setNestSearch(e.target.value)}
+                                placeholder="Search tasks…" className="flex-1 bg-transparent text-sm outline-none" style={{ color: "var(--ink)" }} />
+                            </div>
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              <button type="button" onClick={() => setNestQuadrantFilter("all")}
+                                className="text-[11px] px-2.5 py-1 rounded-full" style={{ background: nestQuadrantFilter === "all" ? "var(--pill-active)" : "var(--chip)", color: nestQuadrantFilter === "all" ? "var(--btn-fg)" : "var(--ink3)" }}>All</button>
+                              {MATRIX_ORDER.map((q) => (
+                                <button key={q} type="button" onClick={() => setNestQuadrantFilter(q)}
+                                  className="text-[11px] px-2.5 py-1 rounded-full flex items-center gap-1.5" style={{ background: nestQuadrantFilter === q ? "var(--pill-active)" : "var(--chip)", color: nestQuadrantFilter === q ? "var(--btn-fg)" : "var(--ink3)" }}>
+                                  <span className="w-[6px] h-[6px] rounded-full" style={{ background: MATRIX_META[q].color }} />
+                                  {MATRIX_META[q].name}
+                                </button>
+                              ))}
+                            </div>
+                          </div>
+                          <div className="max-h-[220px] overflow-y-auto py-1">
+                            <DropdownMenu.Item className={MENU_ITEM} onSelect={() => setFormData(prev => ({ ...prev, linkedParentId: "" }))}>
+                              <span className="w-[7px] h-[7px] shrink-0" />
+                              Not nested
+                              {!formData.linkedParentId && <CheckCircle2 className="w-3.5 h-3.5 ml-auto" style={{ color: "var(--accent)" }} />}
+                            </DropdownMenu.Item>
+                            {nestCandidates.map((t) => (
+                              <DropdownMenu.Item key={t._id} className={MENU_ITEM}
+                                onSelect={() => setFormData(prev => ({ ...prev, linkedParentId: t._id }))}>
+                                <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: MATRIX_META[t.quadrant].color }} />
+                                <span className="truncate">{t.title}</span>
+                                {formData.linkedParentId === t._id && <CheckCircle2 className="w-3.5 h-3.5 ml-auto shrink-0" style={{ color: "var(--accent)" }} />}
+                              </DropdownMenu.Item>
+                            ))}
+                            {nestCandidates.length === 0 && (
+                              <div className="px-3 py-3 text-sm text-center" style={{ color: "var(--muted)" }}>No matching tasks</div>
+                            )}
+                          </div>
+                        </DropdownMenu.Content>
+                      </DropdownMenu.Portal>
+                    </DropdownMenu.Root>
+                  );
+                })()}
               </div>
-            )}
 
-            <div className="flex gap-3 mt-6">
-              <button
-                onClick={closeModal}
-                className={cn(
-                  "flex-1 px-4 py-2 rounded-lg font-medium transition-colors",
-                  darkMode 
-                    ? "bg-[var(--chip)] hover:bg-[var(--hover)] text-[var(--ink)]"
-                    : "bg-[var(--chip)] hover:bg-[var(--hover)] text-[var(--ink)]"
-                )}
-              >
-                Cancel
-              </button>
-              <button
-                onClick={editingTask ? handleUpdateTask : handleAddTask}
-                disabled={!formData.title || (taskOperationLoading.addTask ?? taskOperationLoading.updateTask)}
-                className="flex-1 px-4 py-2 bg-[var(--btn-primary)] text-[var(--btn-fg)] rounded-lg font-medium hover:brightness-95 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-              >
-                {(taskOperationLoading.addTask ?? taskOperationLoading.updateTask)
-                  ? "Processing..." 
-                  : editingTask ? "Update Task" : "Add Task"}
-              </button>
+              {/* subtasks */}
+              {editingTask && !editingTask.parentTaskId && (
+                <div className="mt-5 pt-5" style={{ borderTop: "1px solid var(--line2)" }}>
+                  <div className="flex items-center justify-between mb-2">
+                    <span className="text-[11px] tracking-[0.14em] uppercase" style={{ color: "var(--muted5)" }}>Subtasks</span>
+                    {subtasks.length > 0 && (
+                      <span className="text-[12px]" style={{ color: "var(--muted)" }}>
+                        {subtasks.filter(s => s.status === "completed").length}/{subtasks.length} done
+                      </span>
+                    )}
+                  </div>
+                  {subtasks.length > 0 && (
+                    <div className="h-[4px] rounded-full overflow-hidden mb-3" style={{ background: "var(--line3)" }}>
+                      <div className="h-full rounded-full" style={{ width: `${(subtasks.filter(s => s.status === "completed").length / subtasks.length) * 100}%`, background: "var(--pill-active)" }} />
+                    </div>
+                  )}
+
+                  {subtasksLoading ? (
+                    <div className="flex flex-col gap-2">
+                      {[1, 2, 3].map((i) => (
+                        <div key={i} className="flex items-center gap-2.5 py-1.5">
+                          <div className="w-[18px] h-[18px] rounded-full skel shrink-0" />
+                          <div className="flex-1 h-4 skel" />
+                        </div>
+                      ))}
+                    </div>
+                  ) : (
+                    <div className="flex flex-col">
+                      {subtasks.map((subtask) => (
+                        <div key={subtask._id} className="group flex items-center gap-2.5 py-[7px]">
+                          <button onClick={() => handleToggleSubtaskComplete(subtask)} className="shrink-0 rounded-full outline-none">
+                            {subtask.status === "completed"
+                              ? <CheckCircle2 className="w-[18px] h-[18px]" style={{ color: "var(--accent)" }} />
+                              : <span className="block w-[17px] h-[17px] rounded-full" style={{ border: "1.5px solid var(--check-bd)" }} />}
+                          </button>
+                          {editingSubtaskId === subtask._id ? (
+                            <input
+                              type="text"
+                              autoFocus
+                              value={editingSubtaskTitle}
+                              onChange={(e) => setEditingSubtaskTitle(e.target.value)}
+                              onBlur={() => void handleUpdateSubtaskTitle(subtask._id)}
+                              onKeyDown={(e) => {
+                                if (e.key === "Enter") { e.preventDefault(); void handleUpdateSubtaskTitle(subtask._id); }
+                                else if (e.key === "Escape") { e.preventDefault(); cancelEditSubtask(); }
+                              }}
+                              className="flex-1 text-[14px] px-2 py-1 rounded-[8px] outline-none"
+                              style={{ background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
+                            />
+                          ) : (
+                            <span onClick={() => startEditSubtask(subtask)} className="flex-1 text-[14px] cursor-text"
+                              style={{ color: subtask.status === "completed" ? "var(--strike)" : "var(--ink2)", textDecoration: subtask.status === "completed" ? "line-through" : undefined }}>
+                              {subtask.title}
+                              {subtask.linkedParentId && (
+                                <span className="ml-2 text-[10px] px-[6px] py-px rounded-[5px] align-middle" style={{ color: "var(--accent)", background: "var(--chip)" }}>linked</span>
+                              )}
+                            </span>
+                          )}
+                          {editingSubtaskId !== subtask._id && !subtask.linkedParentId && (
+                            <button onClick={() => startEditSubtask(subtask)} aria-label="Edit subtask"
+                              className="p-1 rounded shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[var(--hover)]" style={{ color: "var(--muted2)" }}>
+                              <Edit3 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                          {subtask.linkedParentId ? (
+                            <button onClick={() => void handleUnlinkSubtask(subtask)} title="Unlink (keeps the task in its quadrant)"
+                              className="p-1 rounded shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[var(--hover)]" style={{ color: "var(--muted2)" }}>
+                              <Unlink className="w-3.5 h-3.5" />
+                            </button>
+                          ) : (
+                            <button onClick={() => handleDeleteSubtask(subtask._id)}
+                              className="p-1 rounded shrink-0 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-[var(--tag-bg)]" style={{ color: "var(--tag-fg)" }}>
+                              <Trash2 className="w-3.5 h-3.5" />
+                            </button>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+
+                  {/* add subtask */}
+                  <div className="hovrow flex items-center gap-2.5 mt-2 rounded-[10px]" style={{ padding: "9px 11px", border: "1px dashed var(--dash)" }}>
+                    <span className="block w-[17px] h-[17px] rounded-full shrink-0" style={{ border: "1.5px dashed var(--check-bd)" }} />
+                    <input
+                      type="text"
+                      placeholder="Add a subtask…"
+                      value={newSubtaskTitle}
+                      onChange={(e) => setNewSubtaskTitle(e.target.value)}
+                      onKeyDown={(e) => { if (e.key === "Enter" && newSubtaskTitle.trim()) { e.preventDefault(); void handleAddSubtask(); } }}
+                      className="flex-1 bg-transparent text-[14px] outline-none placeholder:text-[color:var(--muted3)]"
+                      style={{ color: "var(--ink)" }}
+                    />
+                    <button onClick={() => void handleAddSubtask()} disabled={!newSubtaskTitle.trim()}
+                      className="shrink-0 w-[26px] h-[26px] rounded-[8px] flex items-center justify-center disabled:opacity-40"
+                      style={{ background: "var(--chip)", color: "var(--ink3)" }}>
+                      <Plus className="w-4 h-4" />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* footer */}
+            <div className="flex items-center justify-between gap-3 shrink-0" style={{ padding: "13px 22px", borderTop: "1px solid var(--line2)", background: "var(--form-bg)" }}>
+              {editingTask ? (
+                <button onClick={() => void handleDeleteTask(editingTask)} className="text-[13px] font-medium px-1" style={{ color: "var(--tag-fg)" }}>
+                  Delete
+                </button>
+              ) : <span />}
+              <div className="flex items-center gap-2">
+                <button onClick={closeModal} className="text-[13px] rounded-[10px]"
+                  style={{ padding: "9px 18px", border: "1px solid var(--field-bd)", color: "var(--ink2)" }}>
+                  Cancel
+                </button>
+                <button
+                  onClick={editingTask ? handleUpdateTask : handleAddTask}
+                  disabled={!formData.title || (taskOperationLoading.addTask ?? taskOperationLoading.updateTask)}
+                  className="cta text-[13px] font-semibold rounded-[10px] disabled:opacity-50 disabled:cursor-not-allowed"
+                  style={{ padding: "9px 22px", background: "var(--btn-primary)", color: "var(--btn-fg)" }}>
+                  {(taskOperationLoading.addTask ?? taskOperationLoading.updateTask) ? "Saving…" : "Save"}
+                </button>
+              </div>
             </div>
           </div>
         </div>
