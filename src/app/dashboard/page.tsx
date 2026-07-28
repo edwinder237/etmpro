@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import {
   Search,
   Sun,
@@ -34,7 +34,8 @@ import {
   Star,
   ArrowLeftRight,
   Unlink,
-  Link2
+  Link2,
+  Info
 } from "lucide-react";
 import {
   startOfWeek,
@@ -113,6 +114,7 @@ type ChecklistFrequency = "daily" | "weekly";
 interface ChecklistItem {
   _id: string;
   title: string;
+  description?: string;
   frequency: ChecklistFrequency;
   daysOfWeek?: number[];
   completedDates: string[];
@@ -124,6 +126,7 @@ interface ChecklistItem {
 interface MaintenanceItem {
   _id: string;
   title: string;
+  description?: string;
   intervalDays: number;
   lastCompletedDate?: string;
   nextDueDate: string;
@@ -196,11 +199,17 @@ function safeRemoveItem(key: string): void {
   try { localStorage.removeItem(key); } catch { /* ignore */ }
 }
 
+// Per-quadrant "next action" choice: a task id pins that task as the headline,
+// NEXT_ACTION_CLEARED leaves the slot deliberately empty. Absent = auto-pick.
+const NEXT_ACTION_CLEARED = "__none__";
+const NEXT_ACTION_KEY = "eisenq-next-action";
+
 export default function HomePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
+  const [nextActionChoice, setNextActionChoice] = useState<Partial<Record<TaskQuadrant, string>>>({});
   // "Nest under task" picker (searchable + quadrant-filterable)
   const [nestPickerOpen, setNestPickerOpen] = useState(false);
   const [nestSearch, setNestSearch] = useState("");
@@ -315,7 +324,7 @@ export default function HomePage() {
   const [maintenanceItems, setMaintenanceItems] = useState<MaintenanceItem[]>([]);
   const [showMaintenanceForm, setShowMaintenanceForm] = useState(false);
   const [editingMaintenanceItem, setEditingMaintenanceItem] = useState<MaintenanceItem | null>(null);
-  const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", intervalDays: 90, nextDueDate: "" });
+  const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
   const [paymentsData, setPaymentsData] = useState<PaymentsDueData | null>(null);
   const [paymentsError, setPaymentsError] = useState(false);
   const [expandedPaymentAccounts, setExpandedPaymentAccounts] = useState<Set<string>>(new Set());
@@ -323,6 +332,7 @@ export default function HomePage() {
   const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null);
   const [checklistFormData, setChecklistFormData] = useState({
     title: "",
+    description: "",
     frequency: "daily" as ChecklistFrequency,
     daysOfWeek: [] as number[],
   });
@@ -629,6 +639,10 @@ export default function HomePage() {
     const storedUrls = safeGetItem("eisenq-ical-urls");
     if (storedUrls) {
       try { setIcalUrls(JSON.parse(storedUrls) as string[]); } catch { /* ignore */ }
+    }
+    const storedNextAction = safeGetItem(NEXT_ACTION_KEY);
+    if (storedNextAction) {
+      try { setNextActionChoice(JSON.parse(storedNextAction) as Partial<Record<TaskQuadrant, string>>); } catch { /* ignore */ }
     }
 
     // Hydrate from the server and refresh the cache.
@@ -1071,9 +1085,37 @@ export default function HomePage() {
   };
 
   const resetChecklistForm = () => {
-    setChecklistFormData({ title: "", frequency: "daily", daysOfWeek: [] });
+    setChecklistFormData({ title: "", description: "", frequency: "daily", daysOfWeek: [] });
     setEditingChecklistItem(null);
     setShowChecklistForm(false);
+  };
+
+  // Move a routine item within the list currently on screen. Items hidden by the
+  // active tab keep their absolute slots, so reordering a filtered view behaves
+  // the way it looks.
+  const handleReorderChecklistItem = async (item: ChecklistItem, dir: "up" | "down", visible: ChecklistItem[]) => {
+    const idx = visible.findIndex(i => i._id === item._id);
+    const swapWith = dir === "up" ? idx - 1 : idx + 1;
+    if (idx === -1 || swapWith < 0 || swapWith >= visible.length) return;
+    const reordered = [...visible];
+    [reordered[idx], reordered[swapWith]] = [reordered[swapWith]!, reordered[idx]!];
+
+    const visibleIds = new Set(visible.map(i => i._id));
+    let k = 0;
+    const full = checklistItems.map(i => visibleIds.has(i._id) ? reordered[k++]! : i);
+    const items = full.map((i, sortOrder) => ({ _id: i._id, sortOrder }));
+
+    setChecklistItems(full.map((i, sortOrder) => ({ ...i, sortOrder })));
+    try {
+      const res = await fetch("/api/checklist/reorder", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ items }),
+      });
+      if (!res.ok) void fetchChecklistItems();
+    } catch {
+      void fetchChecklistItems();
+    }
   };
 
   const handleAddChecklistItem = async () => {
@@ -1085,6 +1127,7 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           title: checklistFormData.title.trim(),
+          description: checklistFormData.description.trim() || undefined,
           frequency: checklistFormData.frequency,
           daysOfWeek: checklistFormData.frequency === "weekly" ? checklistFormData.daysOfWeek : undefined,
         }),
@@ -1112,6 +1155,7 @@ export default function HomePage() {
         body: JSON.stringify({
           _id: editingChecklistItem._id,
           title: checklistFormData.title.trim(),
+          description: checklistFormData.description.trim() || null,
           frequency: checklistFormData.frequency,
           daysOfWeek: checklistFormData.frequency === "weekly" ? checklistFormData.daysOfWeek : null,
         }),
@@ -1147,6 +1191,7 @@ export default function HomePage() {
     setEditingChecklistItem(item);
     setChecklistFormData({
       title: item.title,
+      description: item.description ?? "",
       frequency: item.frequency,
       daysOfWeek: item.daysOfWeek ?? [],
     });
@@ -1172,11 +1217,11 @@ export default function HomePage() {
       const res = await fetch("/api/maintenance", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ title: maintenanceFormData.title.trim(), intervalDays: maintenanceFormData.intervalDays, nextDueDate: nextDue }),
+        body: JSON.stringify({ title: maintenanceFormData.title.trim(), description: maintenanceFormData.description.trim() || undefined, intervalDays: maintenanceFormData.intervalDays, nextDueDate: nextDue }),
       });
       if (res.ok) {
         await fetchMaintenanceItems();
-        setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+        setMaintenanceFormData({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
         setShowMaintenanceForm(false);
       }
     } catch { /* silently fail */ }
@@ -1191,13 +1236,14 @@ export default function HomePage() {
         body: JSON.stringify({
           _id: editingMaintenanceItem._id,
           title: maintenanceFormData.title.trim(),
+          description: maintenanceFormData.description.trim() || null,
           intervalDays: maintenanceFormData.intervalDays,
           ...(maintenanceFormData.nextDueDate ? { nextDueDate: maintenanceFormData.nextDueDate } : {}),
         }),
       });
       if (res.ok) {
         await fetchMaintenanceItems();
-        setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+        setMaintenanceFormData({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
         setEditingMaintenanceItem(null);
         setShowMaintenanceForm(false);
       }
@@ -1224,7 +1270,7 @@ export default function HomePage() {
   };
 
   const resetMaintenanceForm = () => {
-    setMaintenanceFormData({ title: "", intervalDays: 90, nextDueDate: "" });
+    setMaintenanceFormData({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
     setEditingMaintenanceItem(null);
     setShowMaintenanceForm(false);
   };
@@ -2303,36 +2349,50 @@ export default function HomePage() {
   // reorder controls) takes priority — "manual order wins"; tasks without one
   // fall back to overdue → earliest due date → oldest created.
   const getOrderedQuadrantTasks = (quadrant: TaskQuadrant) => {
-    const startToday = startOfDay(new Date());
     return [...getTasksByQuadrant(quadrant)].sort((a, b) => {
       // Scheduled tasks (with a due date) always lead; unscheduled sink to the
       // bottom — they still need a date.
       const aSched = !!a.dueDate;
       const bSched = !!b.dueDate;
       if (aSched !== bSched) return aSched ? -1 : 1;
-      // Within a group, a manual sortOrder wins.
+      // Scheduled tasks read strictly by date, soonest first (overdue dates are
+      // in the past, so they surface at the top naturally).
+      if (aSched) return new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime();
+      // Unscheduled tasks have no date to order by, so a manual sortOrder wins.
       const ao = a.sortOrder ?? Infinity;
       const bo = b.sortOrder ?? Infinity;
       if (ao !== bo) return ao - bo;
-      if (aSched) {
-        const aOver = a.status !== "completed" && new Date(a.dueDate!) < startToday ? 1 : 0;
-        const bOver = b.status !== "completed" && new Date(b.dueDate!) < startToday ? 1 : 0;
-        if (aOver !== bOver) return bOver - aOver;
-        return new Date(a.dueDate!).getTime() - new Date(b.dueDate!).getTime();
-      }
       return new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime();
     });
   };
 
-  // Split a quadrant's ordered tasks into the single "next action" + the "up next" list.
+  // Persist the per-quadrant next-action choice (a pinned task id, or cleared).
+  const setNextActionFor = (quadrant: TaskQuadrant, value: string | undefined) => {
+    setNextActionChoice(prev => {
+      const next = { ...prev };
+      if (value === undefined) delete next[quadrant];
+      else next[quadrant] = value;
+      safeSetItem(NEXT_ACTION_KEY, JSON.stringify(next));
+      return next;
+    });
+  };
+
+  // Split a quadrant's ordered tasks into the single "next action" + the "up next"
+  // list. An explicit choice wins: a pinned task becomes the headline, and a
+  // cleared quadrant deliberately shows no next action.
   const getQuadrantView = (quadrant: TaskQuadrant) => {
     const sorted = getOrderedQuadrantTasks(quadrant);
-    // Prefer an incomplete task as the headline "next action"
-    const headlineIdx = sorted.findIndex(t => t.status !== "completed");
+    const choice = nextActionChoice[quadrant];
+    if (choice === NEXT_ACTION_CLEARED) {
+      return { nextAction: undefined as Task | undefined, upNext: sorted, cleared: sorted.length > 0 };
+    }
+    const pinnedIdx = choice ? sorted.findIndex(t => t._id === choice && t.status !== "completed") : -1;
+    // Otherwise prefer the first incomplete task as the headline "next action"
+    const headlineIdx = pinnedIdx !== -1 ? pinnedIdx : sorted.findIndex(t => t.status !== "completed");
     const idx = headlineIdx === -1 ? 0 : headlineIdx;
     const nextAction = sorted[idx];
     const upNext = sorted.filter((_, i) => i !== idx);
-    return { nextAction, upNext };
+    return { nextAction, upNext, cleared: false };
   };
 
   // Give an unscheduled task a due date in one tap (defaults to 9am).
@@ -2361,7 +2421,20 @@ export default function HomePage() {
     }
   };
 
-  // Reorder a task within its quadrant. 'top' makes it the Next action.
+  // Promote a task to be the quadrant's headline. Pinned explicitly, since
+  // scheduled tasks are ordered by date and can't be moved by sortOrder.
+  const handleMakeNextAction = (task: Task) => {
+    setNextActionFor(task.quadrant, task._id);
+  };
+
+  // Step the headline down: clear the quadrant's next action, leaving it empty
+  // until one is picked again.
+  const handleDemoteNextAction = (quadrant: TaskQuadrant) => {
+    setNextActionFor(quadrant, NEXT_ACTION_CLEARED);
+  };
+
+  // Reorder a task within its quadrant (unscheduled tasks only — dated ones
+  // follow their due date).
   const handleReorderTask = async (task: Task, dir: "up" | "down" | "top") => {
     const ordered = getOrderedQuadrantTasks(task.quadrant);
     const idx = ordered.findIndex(t => t._id === task._id);
@@ -2400,7 +2473,11 @@ export default function HomePage() {
   const linkedParentTitle = (task: Task) =>
     task.linkedParentId ? tasks.find(t => t._id === task.linkedParentId)?.title : undefined;
 
-  // Red "Schedule" pill for tasks sitting in a quadrant without a due date —
+  // The Schedule quadrant is the one whose whole point is giving important work a
+  // date, so the "needs scheduling" nudge is scoped to it.
+  const SCHEDULE_QUADRANT: TaskQuadrant = "important-not-urgent";
+
+  // Red "Schedule" pill for Schedule-quadrant tasks without a due date —
   // a nudge that they still need to be scheduled. One tap sets a date.
   const renderScheduleButton = (task: Task, size: "sm" | "md" = "sm") => (
     <DropdownMenu.Root>
@@ -2437,6 +2514,26 @@ export default function HomePage() {
             <Calendar className="w-4 h-4" style={{ color: "var(--muted2)" }} />
             Pick a date…
           </DropdownMenu.Item>
+        </DropdownMenu.Content>
+      </DropdownMenu.Portal>
+    </DropdownMenu.Root>
+  );
+
+  // Small "i" affordance on a routine row — click to read that item's description.
+  const renderDescriptionInfo = (title: string, description: string) => (
+    <DropdownMenu.Root>
+      <DropdownMenu.Trigger asChild>
+        <button onClick={(e) => e.stopPropagation()} title="Show details"
+          className="shrink-0 p-0.5 rounded outline-none opacity-50 hover:opacity-100 transition-opacity"
+          style={{ color: "var(--muted2)" }}>
+          <Info className="w-[13px] h-[13px]" />
+        </button>
+      </DropdownMenu.Trigger>
+      <DropdownMenu.Portal>
+        <DropdownMenu.Content align="start" sideOffset={6}
+          className="max-w-[280px] rounded-[11px] p-3 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]">
+          <div className="text-[12.5px] font-semibold mb-1" style={{ color: "var(--ink)" }}>{title}</div>
+          <div className="text-[12.5px] whitespace-pre-wrap" style={{ color: "var(--ink3)" }}>{description}</div>
         </DropdownMenu.Content>
       </DropdownMenu.Portal>
     </DropdownMenu.Root>
@@ -3480,12 +3577,14 @@ export default function HomePage() {
                   <span className="text-[12px] whitespace-nowrap" style={{ color: "var(--muted)" }}>{routineDone} of {routineTotal} done</span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-x-10 gap-y-[18px]">
-                  {todaysChecklistItems.map((item) => {
+                  {todaysChecklistItems.map((item, idx) => {
                     const done = isChecklistItemCompletedToday(item);
                     return (
                       <div key={item._id} className="flex items-center gap-[10px]">
+                        <span className="text-[11px] tabular-nums w-[13px] text-right shrink-0" style={{ color: "var(--muted4)" }}>{idx + 1}</span>
                         <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
                         <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
+                        {item.description && renderDescriptionInfo(item.title, item.description)}
                       </div>
                     );
                   })}
@@ -3494,8 +3593,10 @@ export default function HomePage() {
                     const late = !done && maintenanceDaysLate(m) > 0;
                     return (
                       <div key={m._id} className="flex items-center gap-[10px]">
+                        <span className="w-[13px] shrink-0" />
                         <span className={cn("qcheck", done && "checked")} onClick={() => { if (!done) void handleMarkMaintenanceDone(m._id); }} />
                         <span className="text-[13.5px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{m.title}</span>
+                        {m.description && renderDescriptionInfo(m.title, m.description)}
                         {!done && (
                           late ? (
                             <span className="text-[10px] px-[7px] py-px rounded-[5px] shrink-0" style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
@@ -3635,7 +3736,7 @@ export default function HomePage() {
           <div className="grid grid-cols-1 md:grid-cols-2 gap-[22px]">
             {MATRIX_ORDER.map((quadrant) => {
               const meta = MATRIX_META[quadrant];
-              const { nextAction, upNext } = getQuadrantView(quadrant);
+              const { nextAction, upNext, cleared } = getQuadrantView(quadrant);
               const quickVal = quickTaskInputs[quadrant];
               return (
                 <div key={quadrant} className="rounded-2xl overflow-hidden flex flex-col min-h-[300px]"
@@ -3653,10 +3754,24 @@ export default function HomePage() {
                   </div>
                   {/* quadrant body */}
                   <div className="px-[22px] pt-5 pb-[22px] flex-1 flex flex-col">
-                    {nextAction ? (
+                    {(nextAction ?? cleared) ? (
                       <>
+                        {!nextAction ? (
+                          <div style={{ borderLeft: "2px solid var(--line)", paddingLeft: 14 }}>
+                            <span className="text-[11px] tracking-[0.1em] uppercase" style={{ color: "var(--muted3)" }}>{meta.nextLabel}</span>
+                            <div className="text-[14px] mt-[3px]" style={{ color: "var(--muted3)" }}>
+                              None chosen — promote one from Up next.
+                            </div>
+                          </div>
+                        ) : (
                         <div style={{ borderLeft: `2px solid ${meta.color}`, paddingLeft: 14 }}>
-                          <span className="text-[11px] tracking-[0.1em] uppercase" style={{ color: "var(--muted3)" }}>{meta.nextLabel}</span>
+                          <div className="flex items-center justify-between gap-2">
+                            <span className="text-[11px] tracking-[0.1em] uppercase" style={{ color: "var(--muted3)" }}>{meta.nextLabel}</span>
+                            <button onClick={() => handleDemoteNextAction(quadrant)} title="Demote — leave no next action"
+                              className="shrink-0 p-0.5 rounded outline-none opacity-40 hover:opacity-100 transition-opacity" style={{ color: "var(--muted4)" }}>
+                              <ChevronDown className="w-[14px] h-[14px]" />
+                            </button>
+                          </div>
                           <div className="flex items-start gap-[11px] mt-[3px]">
                             <span className={cn("qcheck", nextAction.status === "completed" && "checked")} style={{ marginTop: 5 }} onClick={() => void handleToggleComplete(nextAction)} />
                             <div className="text-[17px] font-semibold cursor-pointer" onClick={() => void openTaskForEdit(nextAction)} style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
@@ -3677,17 +3792,30 @@ export default function HomePage() {
                                 <span className="text-[12px] font-normal" style={{ color: "var(--muted4)" }}> · {formatShortDuration(nextAction.duration)}</span>
                               )}
                             </div>
-                            {!nextAction.dueDate && nextAction.status !== "completed" && (
+                            {quadrant === SCHEDULE_QUADRANT && !nextAction.dueDate && nextAction.status !== "completed" && (
                               <span className="mt-[5px]">{renderScheduleButton(nextAction, "md")}</span>
                             )}
                           </div>
                         </div>
+                        )}
                         {upNext.length > 0 && (
                           <div className="mt-4 pt-[15px]" style={{ borderTop: "1px solid var(--line2)" }}>
                             <div className="text-[10px] tracking-[0.12em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Up next</div>
                             <div className="flex flex-col gap-[11px]">
-                              {upNext.map((t, i) => (
-                                <div key={t._id} className="group flex items-center gap-[11px]">
+                              {upNext.map((t, i) => {
+                                // Unscheduled tasks sink below the dated ones; mark that
+                                // boundary once, the first time it's crossed.
+                                const prevScheduled = i === 0 ? !!nextAction?.dueDate : !!upNext[i - 1]?.dueDate;
+                                const showUnscheduledDivider = !t.dueDate && prevScheduled;
+                                return (
+                                <Fragment key={t._id}>
+                                {showUnscheduledDivider && (
+                                  <div className="flex items-center gap-2 pt-[7px] pb-[1px]">
+                                    <span className="text-[10px] tracking-[0.12em] uppercase shrink-0" style={{ color: "var(--muted4)" }}>Unscheduled</span>
+                                    <span className="flex-1 h-px" style={{ background: "var(--line2)" }} />
+                                  </div>
+                                )}
+                                <div className="group flex items-center gap-[11px]">
                                   <span className={cn("qcheck", t.status === "completed" && "checked")} onClick={() => void handleToggleComplete(t)} />
                                   <span className="text-[14px] cursor-pointer flex-1 min-w-0 truncate" onClick={() => void openTaskForEdit(t)}
                                     style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
@@ -3704,7 +3832,7 @@ export default function HomePage() {
                                       {format(new Date(t.dueDate), "MMM d")}
                                     </span>
                                   )}
-                                  {!t.dueDate && t.status !== "completed" && renderScheduleButton(t)}
+                                  {quadrant === SCHEDULE_QUADRANT && !t.dueDate && t.status !== "completed" && renderScheduleButton(t)}
                                   {formatShortDuration(t.duration) && t.status !== "completed" && (
                                     <span className="text-[12px] font-normal shrink-0 inline-flex items-center gap-[3px] tabular-nums" style={{ color: "var(--muted4)" }}>
                                       <Clock className="w-[11px] h-[11px]" />{formatShortDuration(t.duration)}
@@ -3719,24 +3847,33 @@ export default function HomePage() {
                                     <DropdownMenu.Portal>
                                       <DropdownMenu.Content align="end" sideOffset={5}
                                         className="min-w-[168px] rounded-lg p-1.5 shadow-lg z-[200] bg-[var(--drawer)] border border-[var(--drawer-bd)]">
-                                        <DropdownMenu.Item onSelect={() => void handleReorderTask(t, "top")}
+                                        <DropdownMenu.Item onSelect={() => handleMakeNextAction(t)}
                                           className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
                                           <ChevronsUp className="w-4 h-4" style={{ color: "var(--accent)" }} /> Make next action
                                         </DropdownMenu.Item>
-                                        <DropdownMenu.Item onSelect={() => void handleReorderTask(t, "up")}
-                                          className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
-                                          <ChevronUp className="w-4 h-4" style={{ color: "var(--muted2)" }} /> Move up
-                                        </DropdownMenu.Item>
-                                        <DropdownMenu.Item disabled={i === upNext.length - 1} onSelect={() => void handleReorderTask(t, "down")}
-                                          className={cn("flex items-center gap-2 px-3 py-2 rounded-md text-[13px] outline-none", i === upNext.length - 1 ? "opacity-40" : "cursor-pointer hover:bg-[var(--hover)]")}
-                                          style={{ color: "var(--ink2)" }}>
-                                          <ChevronDown className="w-4 h-4" style={{ color: "var(--muted2)" }} /> Move down
-                                        </DropdownMenu.Item>
+                                        {/* Dated tasks follow their due date, so manual nudging applies to unscheduled ones only. */}
+                                        {!t.dueDate ? (
+                                          <>
+                                            <DropdownMenu.Item onSelect={() => void handleReorderTask(t, "up")}
+                                              className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
+                                              <ChevronUp className="w-4 h-4" style={{ color: "var(--muted2)" }} /> Move up
+                                            </DropdownMenu.Item>
+                                            <DropdownMenu.Item disabled={i === upNext.length - 1} onSelect={() => void handleReorderTask(t, "down")}
+                                              className={cn("flex items-center gap-2 px-3 py-2 rounded-md text-[13px] outline-none", i === upNext.length - 1 ? "opacity-40" : "cursor-pointer hover:bg-[var(--hover)]")}
+                                              style={{ color: "var(--ink2)" }}>
+                                              <ChevronDown className="w-4 h-4" style={{ color: "var(--muted2)" }} /> Move down
+                                            </DropdownMenu.Item>
+                                          </>
+                                        ) : (
+                                          <div className="px-3 py-2 text-[12px]" style={{ color: "var(--muted3)" }}>Ordered by due date</div>
+                                        )}
                                       </DropdownMenu.Content>
                                     </DropdownMenu.Portal>
                                   </DropdownMenu.Root>
                                 </div>
-                              ))}
+                                </Fragment>
+                                );
+                              })}
                             </div>
                           </div>
                         )}
@@ -3808,19 +3945,33 @@ export default function HomePage() {
               {(checklistTab === "all" ? checklistItems : todaysChecklistItems).length === 0 && (
                 <div className="text-[13.5px] px-2 py-3" style={{ color: "var(--muted)" }}>No routine items yet.</div>
               )}
-              {(checklistTab === "all" ? checklistItems : todaysChecklistItems).map((item) => {
+              {(() => {
+                const visible = checklistTab === "all" ? checklistItems : todaysChecklistItems;
+                return visible.map((item, idx) => {
                 const done = isChecklistItemCompletedToday(item);
                 const badge = item.frequency === "daily" ? "daily" : (item.daysOfWeek?.length ? item.daysOfWeek.map((d) => DAY_LABELS[d]).join(", ") : "weekly");
                 return (
                   <div key={item._id} className="flex items-center gap-[10px] rounded-[10px]" style={{ padding: "10px 8px" }}>
+                    <span className="text-[11px] tabular-nums w-[16px] text-right shrink-0" style={{ color: "var(--muted4)" }}>{idx + 1}</span>
                     <span className={cn("qcheck", done && "checked")} onClick={() => void handleToggleChecklistItem(item._id)} />
                     <span className="flex-1 text-[14px]" style={{ color: done ? "var(--strike)" : "var(--ink2)", textDecoration: done ? "line-through" : undefined }}>{item.title}</span>
                     <span className="text-[11px] rounded-[6px]" style={{ padding: "2px 9px", color: "var(--muted)", background: "var(--chip)" }}>{badge}</span>
+                    <div className="flex flex-col shrink-0">
+                      <button onClick={() => void handleReorderChecklistItem(item, "up", visible)} disabled={idx === 0}
+                        title="Move up" className={cn("p-0 leading-none", idx === 0 ? "opacity-25" : "opacity-60 hover:opacity-100")} style={{ color: "var(--muted2)" }}>
+                        <ChevronUp className="w-[14px] h-[14px]" />
+                      </button>
+                      <button onClick={() => void handleReorderChecklistItem(item, "down", visible)} disabled={idx === visible.length - 1}
+                        title="Move down" className={cn("p-0 leading-none", idx === visible.length - 1 ? "opacity-25" : "opacity-60 hover:opacity-100")} style={{ color: "var(--muted2)" }}>
+                        <ChevronDown className="w-[14px] h-[14px]" />
+                      </button>
+                    </div>
                     <button onClick={() => openChecklistItemForEdit(item)} style={{ color: "var(--muted2)" }} className="text-[13px] p-0.5"><Edit3 className="w-[15px] h-[15px]" /></button>
                     <button onClick={() => void handleDeleteChecklistItem(item._id)} style={{ color: "var(--tag-fg)" }} className="p-0.5"><Trash2 className="w-[15px] h-[15px]" /></button>
                   </div>
                 );
-              })}
+                });
+              })()}
               {showChecklistForm ? (
                 <div className="rounded-[14px] mt-2" style={{ margin: "8px 2px 20px", padding: "18px", background: "var(--form-bg)", border: "1px solid var(--form-bd)" }}>
                   <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[16px] mb-3">{editingChecklistItem ? "Edit routine item" : "New routine item"}</div>
@@ -3834,6 +3985,9 @@ export default function HomePage() {
                         className="text-[12.5px] rounded-[9px] capitalize" style={{ padding: "7px 16px", fontWeight: checklistFormData.frequency === f ? 600 : 400, color: checklistFormData.frequency === f ? "var(--btn-fg)" : "var(--accent)", background: checklistFormData.frequency === f ? "var(--pill-active)" : "var(--chip)" }}>{f}</button>
                     ))}
                   </div>
+                  <textarea placeholder="Description · optional — shown from the routine card" value={checklistFormData.description} rows={2}
+                    onChange={(e) => setChecklistFormData((p) => ({ ...p, description: e.target.value }))}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-3 resize-y" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
                   {checklistFormData.frequency === "weekly" && (
                     <div className="flex gap-1.5 mb-3">
                       {DAY_LABELS.map((label, i) => (
@@ -3865,6 +4019,11 @@ export default function HomePage() {
                     <div className="text-[11.5px]" style={{ color: "var(--muted)" }}>every {m.intervalDays} days · due {format(new Date(m.nextDueDate), "MMM d")}</div>
                   </div>
                   <button onClick={() => void handleMarkMaintenanceDone(m._id)} className="text-[12px] font-semibold" style={{ color: "var(--accent)" }}>Mark done</button>
+                  <button onClick={() => {
+                    setEditingMaintenanceItem(m);
+                    setMaintenanceFormData({ title: m.title, description: m.description ?? "", intervalDays: m.intervalDays, nextDueDate: m.nextDueDate });
+                    setShowMaintenanceForm(true);
+                  }} style={{ color: "var(--muted2)" }} className="p-0.5"><Edit3 className="w-[15px] h-[15px]" /></button>
                   <button onClick={() => void handleDeleteMaintenanceItem(m._id)} style={{ color: "var(--tag-fg)" }} className="p-0.5"><Trash2 className="w-[15px] h-[15px]" /></button>
                 </div>
               ))}
@@ -3873,6 +4032,9 @@ export default function HomePage() {
                   <input type="text" autoFocus placeholder="e.g. Replace furnace filter" value={maintenanceFormData.title}
                     onChange={(e) => setMaintenanceFormData((p) => ({ ...p, title: e.target.value }))}
                     className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
+                  <textarea placeholder="Description · optional — shown from the routine card" value={maintenanceFormData.description} rows={2}
+                    onChange={(e) => setMaintenanceFormData((p) => ({ ...p, description: e.target.value }))}
+                    className="w-full text-[13.5px] rounded-[10px] outline-none mb-2.5 resize-y" style={{ padding: "11px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }} />
                   <div className="flex flex-wrap gap-1.5 mb-2.5">
                     {INTERVAL_PRESETS.map((p) => (
                       <button key={p.label} onClick={() => setMaintenanceFormData((f) => ({ ...f, intervalDays: p.days }))}

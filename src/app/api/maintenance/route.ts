@@ -6,6 +6,7 @@ import { z } from "zod";
 
 const createSchema = z.object({
   title: z.string().min(1, "Title is required").max(200, "Title too long"),
+  description: z.string().max(2000, "Description too long").optional(),
   intervalDays: z.number().int().min(1).max(3650),
   nextDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/, "Date must be YYYY-MM-DD"),
 });
@@ -13,6 +14,7 @@ const createSchema = z.object({
 const updateSchema = z.object({
   _id: z.string().min(1),
   title: z.string().min(1).max(200).optional(),
+  description: z.string().max(2000).nullable().optional(),
   intervalDays: z.number().int().min(1).max(3650).optional(),
   nextDueDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/).optional(),
 });
@@ -68,10 +70,18 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
     }
 
-    const { _id, ...updateData } = parsed.data;
+    const { _id, description, ...updateData } = parsed.data;
+    // An empty or null description clears it
+    const clearDescription = description === null || (description !== undefined && !description.trim());
+    const update: { $set: Record<string, unknown>; $unset?: Record<string, "" > } = {
+      $set: { ...updateData, updatedAt: new Date() },
+    };
+    if (clearDescription) update.$unset = { description: "" };
+    else if (description !== undefined) update.$set.description = description;
+
     const result = await maintenanceItemsCollection.findOneAndUpdate(
       { _id: new ObjectId(_id), userId },
-      { $set: { ...updateData, updatedAt: new Date() } },
+      update,
       { returnDocument: "after" }
     );
 
