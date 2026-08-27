@@ -35,7 +35,8 @@ import {
   ArrowLeftRight,
   Unlink,
   Link2,
-  Info
+  Info,
+  Archive
 } from "lucide-react";
 import {
   startOfWeek,
@@ -86,6 +87,7 @@ interface Task {
   linkedParentId?: string;
   goalId?: string;
   sortOrder?: number;
+  archivedAt?: string;
   subtaskCount?: number;
   subtaskCompletedCount?: number;
 }
@@ -275,12 +277,6 @@ export default function HomePage() {
     "urgent-not-important": false,
     "not-urgent-not-important": false,
   });
-  const [hideCompleted] = useState<Record<TaskQuadrant, boolean>>({
-    "urgent-important": true,
-    "important-not-urgent": true,
-    "urgent-not-important": true,
-    "not-urgent-not-important": true,
-  });
   const [formData, setFormData] = useState<{
     title: string;
     description: string;
@@ -331,6 +327,8 @@ export default function HomePage() {
   // Settings state
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
+  const [autoArchiveCompleted, setAutoArchiveCompleted] = useState(false);
+  const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
   const [settingsIcalInput, setSettingsIcalInput] = useState("");
@@ -696,11 +694,14 @@ export default function HomePage() {
       try {
         const res = await fetch("/api/settings");
         if (!res.ok) return;
-        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[] };
+        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean };
         if (typeof data.geminiApiKey === "string") {
           setGeminiApiKey(data.geminiApiKey);
           if (data.geminiApiKey) safeSetItem("eisenq-gemini-api-key", data.geminiApiKey);
           else safeRemoveItem("eisenq-gemini-api-key");
+        }
+        if (typeof data.autoArchiveCompleted === "boolean") {
+          setAutoArchiveCompleted(data.autoArchiveCompleted);
         }
         if (Array.isArray(data.icalUrls)) {
           setIcalUrls(data.icalUrls);
@@ -712,7 +713,7 @@ export default function HomePage() {
 
   // Persist settings to the encrypted DB. localStorage cache is updated by callers
   // for instant reads; this fire-and-forget call keeps the server in sync.
-  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[] }) => {
+  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean }) => {
     void fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -1956,6 +1957,76 @@ export default function HomePage() {
     addToCalendar({ title: formData.title, description: formData.description, startDate, endDate }, provider);
   };
 
+  // Archive a task: it leaves the matrix but is kept until deleted from settings.
+  const handleArchiveTask = async (task: Task, opts?: { silent?: boolean }) => {
+    setTasks(prev => prev.filter(t => t._id !== task._id));
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: task._id, archived: true }),
+      });
+      if (!res.ok) {
+        void fetchTasks();
+        toast.error("Failed to archive task");
+      } else if (!opts?.silent) {
+        toast.success("Task archived");
+      }
+    } catch {
+      void fetchTasks();
+      toast.error("Failed to archive task");
+    }
+  };
+
+  const fetchArchivedTasks = async () => {
+    try {
+      const res = await fetch("/api/tasks/archived");
+      if (res.ok) setArchivedTasks(await res.json() as Task[]);
+    } catch { /* non-critical */ }
+  };
+
+  // Put an archived task back into its quadrant.
+  const handleRestoreTask = async (task: Task) => {
+    setArchivedTasks(prev => prev.filter(t => t._id !== task._id));
+    try {
+      const res = await fetch("/api/tasks", {
+        method: "PUT",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ _id: task._id, archived: false }),
+      });
+      if (res.ok) {
+        void fetchTasks();
+        toast.success("Task restored");
+      } else {
+        void fetchArchivedTasks();
+        toast.error("Failed to restore task");
+      }
+    } catch {
+      void fetchArchivedTasks();
+      toast.error("Failed to restore task");
+    }
+  };
+
+  const handleDeleteArchivedTasks = async () => {
+    try {
+      const res = await fetch("/api/tasks/archived", { method: "DELETE" });
+      if (res.ok) {
+        const { deleted } = await res.json() as { deleted: number };
+        setArchivedTasks([]);
+        toast.success(deleted === 1 ? "1 archived task deleted" : `${deleted} archived tasks deleted`);
+      } else {
+        toast.error("Failed to delete archived tasks");
+      }
+    } catch {
+      toast.error("Failed to delete archived tasks");
+    }
+  };
+
+  const handleToggleAutoArchive = (next: boolean) => {
+    setAutoArchiveCompleted(next);
+    persistSettings({ autoArchiveCompleted: next });
+  };
+
   // Delete the task being edited (its subtasks cascade server-side).
   const handleDeleteTask = async (task: Task) => {
     setTasks(prev => prev.filter(t => t._id !== task._id));
@@ -2008,8 +2079,11 @@ export default function HomePage() {
           toast.success("Task marked as pending");
           playUncompleteSound();
         } else {
-          toast.success("Task completed! 🎉");
+          toast.success(autoArchiveCompleted ? "Task completed — archived 🎉" : "Task completed! 🎉");
           playCompletionSound();
+          // With auto-archive on, a completed task leaves the board immediately
+          // instead of sitting crossed off at the bottom.
+          if (autoArchiveCompleted) void handleArchiveTask({ ...task, status: "completed" }, { silent: true });
         }
       } else {
         toast.error("Failed to update task");
@@ -2350,15 +2424,8 @@ export default function HomePage() {
     task.description?.toLowerCase().includes(searchQuery.toLowerCase())
   );
 
-  const getTasksByQuadrant = (quadrant: TaskQuadrant) => {
-    const quadrantTasks = filteredTasks.filter(task => task.quadrant === quadrant);
-    
-    if (hideCompleted[quadrant]) {
-      return quadrantTasks.filter(task => task.status !== "completed");
-    }
-    
-    return quadrantTasks;
-  };
+  const getTasksByQuadrant = (quadrant: TaskQuadrant) =>
+    filteredTasks.filter(task => task.quadrant === quadrant);
 
   // ===== "Calm Editorial" redesign: theming + derived view models =====
 
@@ -2418,6 +2485,10 @@ export default function HomePage() {
   // fall back to overdue → earliest due date → oldest created.
   const getOrderedQuadrantTasks = (quadrant: TaskQuadrant) => {
     return [...getTasksByQuadrant(quadrant)].sort((a, b) => {
+      // Completed tasks stay visible but sink below all live work.
+      const aDone = a.status === "completed";
+      const bDone = b.status === "completed";
+      if (aDone !== bDone) return aDone ? 1 : -1;
       // Scheduled tasks (with a due date) always lead; unscheduled sink to the
       // bottom — they still need a date.
       const aSched = !!a.dueDate;
@@ -2721,7 +2792,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -3891,15 +3962,24 @@ export default function HomePage() {
                             <div className="text-[10px] tracking-[0.12em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Up next</div>
                             <div className="flex flex-col gap-[11px]">
                               {upNext.map((t, i) => {
-                                // Unscheduled tasks sink below the dated ones; mark that
-                                // boundary once, the first time it's crossed.
-                                const prevScheduled = i === 0 ? !!nextAction?.dueDate : !!upNext[i - 1]?.dueDate;
-                                const showUnscheduledDivider = !t.dueDate && prevScheduled;
+                                // Rows are grouped scheduled → unscheduled → completed.
+                                // Mark each boundary once, the first time it's crossed.
+                                const prev = i === 0 ? nextAction : upNext[i - 1];
+                                const done = t.status === "completed";
+                                const prevDone = prev?.status === "completed";
+                                const showCompletedDivider = done && !prevDone;
+                                const showUnscheduledDivider = !done && !t.dueDate && !!prev?.dueDate;
                                 return (
                                 <Fragment key={t._id}>
                                 {showUnscheduledDivider && (
                                   <div className="flex items-center gap-2 pt-[7px] pb-[1px]">
                                     <span className="text-[10px] tracking-[0.12em] uppercase shrink-0" style={{ color: "var(--muted4)" }}>Unscheduled</span>
+                                    <span className="flex-1 h-px" style={{ background: "var(--line2)" }} />
+                                  </div>
+                                )}
+                                {showCompletedDivider && (
+                                  <div className="flex items-center gap-2 pt-[7px] pb-[1px]">
+                                    <span className="text-[10px] tracking-[0.12em] uppercase shrink-0" style={{ color: "var(--muted4)" }}>Completed</span>
                                     <span className="flex-1 h-px" style={{ background: "var(--line2)" }} />
                                   </div>
                                 )}
@@ -3961,6 +4041,11 @@ export default function HomePage() {
                                         ) : (
                                           <div className="px-3 py-2 text-[12px]" style={{ color: "var(--muted3)" }}>Ordered by due date</div>
                                         )}
+                                        <DropdownMenu.Separator className="h-px my-1 bg-[var(--line3)]" />
+                                        <DropdownMenu.Item onSelect={() => void handleArchiveTask(t)}
+                                          className="flex items-center gap-2 px-3 py-2 rounded-md text-[13px] cursor-pointer outline-none hover:bg-[var(--hover)] text-[var(--ink2)]">
+                                          <Archive className="w-4 h-4" style={{ color: "var(--muted2)" }} /> Archive
+                                        </DropdownMenu.Item>
                                       </DropdownMenu.Content>
                                     </DropdownMenu.Portal>
                                   </DropdownMenu.Root>
@@ -4925,6 +5010,52 @@ export default function HomePage() {
             <Dialog.Description className="sr-only">Application settings</Dialog.Description>
 
             <div className="flex flex-col">
+              {/* Completed tasks & archive */}
+              <div className="pb-5" style={{ borderBottom: "1px solid var(--line2)", marginBottom: "20px" }}>
+                <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Completed tasks</label>
+                <p className="text-[12px] mb-2.5" style={{ color: "var(--muted)" }}>
+                  Completed tasks stay on the board, crossed off at the bottom of their quadrant, until you archive them.
+                </p>
+
+                <button onClick={() => handleToggleAutoArchive(!autoArchiveCompleted)}
+                  className="w-full flex items-center justify-between gap-3 rounded-[10px] text-left"
+                  style={{ padding: "10px 12px", background: "var(--field)", border: "1px solid var(--field-bd)" }}>
+                  <span className="text-[13px]" style={{ color: "var(--ink2)" }}>Archive automatically when completed</span>
+                  <span className="shrink-0 rounded-full transition-colors" style={{ width: 36, height: 20, padding: 2, background: autoArchiveCompleted ? "var(--pill-active)" : "var(--check-bd)" }}>
+                    <span className="block rounded-full transition-transform" style={{ width: 16, height: 16, background: "var(--btn-fg)", transform: autoArchiveCompleted ? "translateX(16px)" : "translateX(0)" }} />
+                  </span>
+                </button>
+
+                <div className="flex items-center justify-between gap-3 mt-2.5">
+                  <span className="text-[12.5px]" style={{ color: "var(--muted5)" }}>
+                    {archivedTasks.length === 0
+                      ? "No archived tasks."
+                      : `${archivedTasks.length} archived task${archivedTasks.length === 1 ? "" : "s"}.`}
+                  </span>
+                  {archivedTasks.length > 0 && (
+                    <button
+                      onClick={() => { if (confirm(`Permanently delete ${archivedTasks.length} archived task${archivedTasks.length === 1 ? "" : "s"}? This cannot be undone.`)) void handleDeleteArchivedTasks(); }}
+                      className="text-[12.5px] font-semibold" style={{ color: "var(--tag-fg)" }}>
+                      Delete all
+                    </button>
+                  )}
+                </div>
+
+                {archivedTasks.length > 0 && (
+                  <div className="mt-2 rounded-[10px] overflow-hidden" style={{ border: "1px solid var(--field-bd)" }}>
+                    <div className="max-h-[168px] overflow-y-auto">
+                      {archivedTasks.map((t) => (
+                        <div key={t._id} className="flex items-center gap-2 px-3 py-2" style={{ borderBottom: "1px solid var(--line2)" }}>
+                          <span className="w-[7px] h-[7px] rounded-full shrink-0" style={{ background: MATRIX_META[t.quadrant].color }} />
+                          <span className="flex-1 text-[13px] truncate" style={{ color: "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>{t.title}</span>
+                          <button onClick={() => void handleRestoreTask(t)} className="text-[12px] shrink-0" style={{ color: "var(--accent)" }}>Restore</button>
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </div>
+
               {/* Weather location */}
               <div className="pb-5">
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Weather location</label>

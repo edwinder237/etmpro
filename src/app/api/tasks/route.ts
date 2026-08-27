@@ -38,6 +38,7 @@ const updateTaskSchema = z.object({
   duration: z.number().int().min(1).max(1440).nullable().optional(),
   goalId: z.string().nullable().optional(),
   linkedParentId: z.string().nullable().optional(),
+  archived: z.boolean().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -58,7 +59,8 @@ export async function GET(request: NextRequest) {
     // In MongoDB, { field: null } matches docs where field is null OR doesn't exist
     const matchFilter: Record<string, unknown> = {
       userId,
-      parentTaskId: null
+      parentTaskId: null,
+      archivedAt: null   // archived tasks drop out of the matrix
     };
 
     if (search) {
@@ -240,7 +242,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, dueDate, duration, goalId, linkedParentId, ...restUpdateData } = parseResult.data;
+    const { _id, dueDate, duration, goalId, linkedParentId, archived, ...restUpdateData } = parseResult.data;
 
     // Validate ObjectId format
     if (!ObjectId.isValid(_id)) {
@@ -267,6 +269,14 @@ export async function PUT(request: NextRequest) {
       updateOperation.$unset = { ...updateOperation.$unset, duration: "" as const };
     } else if (duration !== undefined) {
       updateOperation.$set.duration = duration;
+    }
+
+    // Archive / restore. Archiving a parent takes its subtasks with it, since
+    // they only exist inside that task.
+    if (archived === true) {
+      updateOperation.$set.archivedAt = new Date();
+    } else if (archived === false) {
+      updateOperation.$unset = { ...updateOperation.$unset, archivedAt: "" as const };
     }
 
     // Handle goalId - if null, unset it; if string, verify ownership and set

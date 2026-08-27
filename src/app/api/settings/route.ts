@@ -7,6 +7,7 @@ import { encrypt, decrypt } from "~/server/crypto";
 const updateSettingsSchema = z.object({
   geminiApiKey: z.string().max(200).optional(),
   icalUrls: z.array(z.string().url()).max(10).optional(),
+  autoArchiveCompleted: z.boolean().optional(),
 });
 
 export async function GET() {
@@ -29,7 +30,7 @@ export async function GET() {
     }
 
     return NextResponse.json(
-      { geminiApiKey, icalUrls },
+      { geminiApiKey, icalUrls, autoArchiveCompleted: doc?.autoArchiveCompleted ?? false },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch {
@@ -53,7 +54,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { geminiApiKey, icalUrls } = parsed.data;
+    const { geminiApiKey, icalUrls, autoArchiveCompleted } = parsed.data;
 
     const set: Record<string, unknown> = { updatedAt: new Date() };
     const unset: Record<string, ""> = {};
@@ -65,6 +66,9 @@ export async function PUT(request: NextRequest) {
     if (icalUrls !== undefined) {
       if (icalUrls.length) set.icalUrlsEnc = encrypt(JSON.stringify(icalUrls));
       else unset.icalUrlsEnc = "";
+    }
+    if (autoArchiveCompleted !== undefined) {
+      set.autoArchiveCompleted = autoArchiveCompleted;
     }
 
     const update: Record<string, unknown> = {

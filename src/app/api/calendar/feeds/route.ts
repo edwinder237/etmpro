@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import ical, { type VEvent } from "node-ical";
+import { safeFetch } from "~/server/safe-fetch";
 
 // Simple in-memory rate limiting
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -73,8 +75,7 @@ async function parseFeed(
 ): Promise<CalendarGroup> {
   const fallbackName = `Calendar ${index + 1}`;
   try {
-    const feedRes = await fetch(url, {
-      signal: AbortSignal.timeout(10000),
+    const feedRes = await safeFetch(url, {
       headers: { "User-Agent": "EisenQ Calendar/1.0" },
     });
     if (!feedRes.ok) return { name: fallbackName, events: [], error: true };
@@ -138,6 +139,11 @@ async function parseFeed(
 
 export async function POST(req: NextRequest) {
   try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
     if (!checkRateLimit(ip)) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
