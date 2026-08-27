@@ -39,6 +39,8 @@ const updateTaskSchema = z.object({
   goalId: z.string().nullable().optional(),
   linkedParentId: z.string().nullable().optional(),
   archived: z.boolean().optional(),
+  // Sent by the client so the stamp reflects the user's own clock
+  completedAt: z.string().datetime().nullable().optional(),
 });
 
 export async function GET(request: NextRequest) {
@@ -242,7 +244,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { _id, dueDate, duration, goalId, linkedParentId, archived, ...restUpdateData } = parseResult.data;
+    const { _id, dueDate, duration, goalId, linkedParentId, archived, completedAt, ...restUpdateData } = parseResult.data;
 
     // Validate ObjectId format
     if (!ObjectId.isValid(_id)) {
@@ -269,6 +271,13 @@ export async function PUT(request: NextRequest) {
       updateOperation.$unset = { ...updateOperation.$unset, duration: "" as const };
     } else if (duration !== undefined) {
       updateOperation.$set.duration = duration;
+    }
+
+    // Completion stamp. Cleared when a task is reopened.
+    if (completedAt === null) {
+      updateOperation.$unset = { ...updateOperation.$unset, completedAt: "" as const };
+    } else if (completedAt !== undefined) {
+      updateOperation.$set.completedAt = new Date(completedAt);
     }
 
     // Archive / restore. Archiving a parent takes its subtasks with it, since
