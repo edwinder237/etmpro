@@ -57,6 +57,15 @@ export async function GET(request: NextRequest) {
     const priority = searchParams.get("priority");
     const status = searchParams.get("status");
 
+    // One-time backfill: tasks completed before completion stamping existed have
+    // no completedAt, so they would render without a date forever. Stamp them
+    // once with the current time. Self-limiting — after the first pass nothing
+    // matches, so this costs an indexed no-op query per load.
+    await tasksCollection.updateMany(
+      { userId, status: "completed", completedAt: { $exists: false } },
+      { $set: { completedAt: new Date() } }
+    );
+
     // Build match filter for parent tasks only (no parentTaskId)
     // In MongoDB, { field: null } matches docs where field is null OR doesn't exist
     const matchFilter: Record<string, unknown> = {
