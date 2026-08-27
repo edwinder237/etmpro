@@ -400,6 +400,7 @@ export default function HomePage() {
   const [goalsLoading, setGoalsLoading] = useState(false);
   const [isGoalsExpanded, setIsGoalsExpanded] = useState(false);
   const [goalsPanelPeriodType, setGoalsPanelPeriodType] = useState<GoalPeriodType>("week");
+  const [showUnfinishedGoals, setShowUnfinishedGoals] = useState(false);
   const [goalsPanelDate, setGoalsPanelDate] = useState(new Date());
   const [showGoalForm, setShowGoalForm] = useState(false);
   const [editingGoal, setEditingGoal] = useState<Goal | null>(null);
@@ -1353,6 +1354,16 @@ export default function HomePage() {
   const goalsPanelCurrentKey = isCustomPeriod ? "" : keyOfPeriod(goalsPanelPeriodType, new Date());
   const isViewingPastPeriod = !isCustomPeriod && goalsPanelKey < goalsPanelCurrentKey;
 
+  // Goals whose period has already ended and that were never achieved. These are
+  // easy to lose track of, since finding them otherwise means paging back
+  // through each period one at a time.
+  const pastUnfinishedGoals = goals
+    .filter(g => g.status === "active")
+    .filter(g => g.periodType === "custom"
+      ? !!g.endDate && g.endDate < todayStr
+      : g.periodKey < keyOfPeriod(g.periodType, new Date()))
+    .sort((a, b) => (b.endDate ?? b.periodKey).localeCompare(a.endDate ?? a.periodKey));
+
   const currentWeekGoals = goals.filter(g => g.periodType === "week" && g.periodKey === currentWeekKey);
   const currentMonthGoals = goals.filter(g => g.periodType === "month" && g.periodKey === currentMonthKey);
   const currentYearGoals = goals.filter(g => g.periodType === "year" && g.periodKey === currentYearKey);
@@ -1611,8 +1622,22 @@ export default function HomePage() {
   };
 
   const handleCopyGoalToCurrentPeriod = async (goal: Goal) => {
+    // A custom goal has no "current period" to land in, so it gets a fresh
+    // window of the same length starting today.
+    let customRange: { startDate: string; endDate: string } | undefined;
+    if (goal.periodType === "custom") {
+      const days = goal.startDate && goal.endDate
+        ? Math.max(1, Math.round((new Date(goal.endDate).getTime() - new Date(goal.startDate).getTime()) / 86400000))
+        : 90;
+      const today = new Date();
+      customRange = {
+        startDate: format(today, "yyyy-MM-dd"),
+        endDate: format(addDays(today, days), "yyyy-MM-dd"),
+      };
+    }
     const targetKey = goal.periodType === "week" ? currentWeekKey
       : goal.periodType === "month" ? currentMonthKey
+      : goal.periodType === "custom" ? (customRange?.startDate ?? "")
       : currentYearKey;
     // Keep the parent link only if the parent belongs to the current parent period
     const parent = goal.parentGoalId ? goalsById.get(goal.parentGoalId) : undefined;
@@ -1628,14 +1653,18 @@ export default function HomePage() {
           note: goal.note,
           periodType: goal.periodType,
           periodKey: targetKey,
+          ...(customRange ?? {}),
           parentGoalId: keepParent ? goal.parentGoalId : undefined,
         }),
       });
       if (response.ok) {
         const newGoal = await response.json() as Goal;
         setGoals(prev => [...prev, newGoal]);
-        const label = goal.periodType === "week" ? "this week" : goal.periodType === "month" ? "this month" : "this year";
-        toast.success(`Copied to ${label}`);
+        const label = goal.periodType === "week" ? "this week"
+          : goal.periodType === "month" ? "this month"
+          : goal.periodType === "custom" ? "a new window"
+          : "this year";
+        toast.success(`Brought forward to ${label}`);
       } else {
         toast.error("Failed to copy goal");
       }
@@ -2871,11 +2900,22 @@ export default function HomePage() {
                     </div>
                   );
                 })}
-                {focusMoreCount > 0 && (
-                  <button onClick={() => setIsGoalsExpanded(true)} className="text-[12px] font-semibold md:text-right" style={{ color: "var(--accent)" }}>
-                    +{focusMoreCount} more ›
+                <div className="flex items-center gap-3 md:justify-end">
+                  {focusMoreCount > 0 && (
+                    <button onClick={() => setIsGoalsExpanded(true)} className="text-[12px] font-semibold" style={{ color: "var(--accent)" }}>
+                      +{focusMoreCount} more
+                    </button>
+                  )}
+                  <button onClick={() => { setShowUnfinishedGoals(false); setIsGoalsExpanded(true); }}
+                    className="text-[12px] font-semibold inline-flex items-center gap-1.5" style={{ color: "var(--accent)" }}>
+                    Manage goals ›
+                    {pastUnfinishedGoals.length > 0 && (
+                      <span className="text-[10px] rounded-full px-[6px] py-px" style={{ background: "var(--chip)", color: "var(--muted5)" }}>
+                        {pastUnfinishedGoals.length} unfinished
+                      </span>
+                    )}
                   </button>
-                )}
+                </div>
               </div>
             ) : (
               <>
@@ -4267,12 +4307,24 @@ export default function HomePage() {
           </div>
           <div className="flex items-center justify-between flex-wrap gap-y-2 gap-x-3" style={{ padding: "18px 26px 0" }}>
             <div className="inline-flex rounded-[9px] p-0.5" style={{ background: "var(--chip)" }}>
-              {([["week", "Week"], ["month", "Month"], ["year", "Year"], ["custom", "Custom"]] as const).map(([pt, label]) => (
-                <button key={pt} onClick={() => { setGoalsPanelPeriodType(pt); resetGoalForm(); }}
-                  className="text-[12.5px] rounded-[7px]" style={{ padding: "6px 12px", fontWeight: goalsPanelPeriodType === pt ? 600 : 400, color: goalsPanelPeriodType === pt ? "var(--btn-fg)" : "var(--accent)", background: goalsPanelPeriodType === pt ? "var(--pill-active)" : "transparent" }}>{label}</button>
-              ))}
+              {([["week", "Week"], ["month", "Month"], ["year", "Year"], ["custom", "Custom"]] as const).map(([pt, label]) => {
+                const on = !showUnfinishedGoals && goalsPanelPeriodType === pt;
+                return (
+                <button key={pt} onClick={() => { setShowUnfinishedGoals(false); setGoalsPanelPeriodType(pt); resetGoalForm(); }}
+                  className="text-[12.5px] rounded-[7px]" style={{ padding: "6px 12px", fontWeight: on ? 600 : 400, color: on ? "var(--btn-fg)" : "var(--accent)", background: on ? "var(--pill-active)" : "transparent" }}>{label}</button>
+                );
+              })}
+              {pastUnfinishedGoals.length > 0 && (
+                <button onClick={() => { setShowUnfinishedGoals(true); resetGoalForm(); }}
+                  className="text-[12.5px] rounded-[7px] inline-flex items-center gap-1.5" style={{ padding: "6px 12px", fontWeight: showUnfinishedGoals ? 600 : 400, color: showUnfinishedGoals ? "var(--btn-fg)" : "var(--accent)", background: showUnfinishedGoals ? "var(--pill-active)" : "transparent" }}>
+                  Unfinished
+                  <span className="text-[10px] rounded-full px-[6px] py-px" style={{ background: showUnfinishedGoals ? "rgba(255,255,255,0.22)" : "var(--drawer-bd)", color: showUnfinishedGoals ? "var(--btn-fg)" : "var(--muted5)" }}>
+                    {pastUnfinishedGoals.length}
+                  </span>
+                </button>
+              )}
             </div>
-            {!isCustomPeriod && (
+            {!isCustomPeriod && !showUnfinishedGoals && (
               <div className="flex items-center gap-1">
                 <button onClick={() => navigateGoalsPeriod("prev")} className="navbtn" style={{ width: 30, height: 30 }}><ChevronLeft className="w-4 h-4" /></button>
                 <span className="text-[12px] text-center min-w-[120px]" style={{ color: "var(--ink2)" }}>
@@ -4286,6 +4338,48 @@ export default function HomePage() {
               </div>
             )}
           </div>
+          {showUnfinishedGoals ? (
+            <div style={{ padding: "14px 22px 4px" }} className="flex flex-col gap-1.5">
+              <p className="text-[12.5px] px-1 pb-1" style={{ color: "var(--muted)" }}>
+                Goals whose period has ended that you never marked achieved. Bring one forward to pick it up again.
+              </p>
+              {pastUnfinishedGoals.map((goal) => {
+                const counts = goalTaskCounts.get(goal._id);
+                const when = goal.periodType === "custom" && goal.endDate
+                  ? `ended ${format(new Date(goal.endDate), "MMM d, yyyy")}`
+                  : goal.periodType === "week" ? `week of ${format(new Date(goal.periodKey), "MMM d, yyyy")}`
+                  : goal.periodType === "month" ? format(new Date(`${goal.periodKey}-01`), "MMMM yyyy")
+                  : goal.periodKey;
+                return (
+                  <div key={goal._id} className="rounded-[12px]" style={{ padding: "12px 14px", background: "var(--field)", border: "1px solid var(--field-bd)" }}>
+                    <div className="flex items-start gap-2.5">
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14px]" style={{ color: "var(--ink)" }}>
+                          {goalIconOf(goal) && <span className="mr-1.5">{goalIconOf(goal)}</span>}
+                          {goal.title}
+                        </div>
+                        <div className="text-[11.5px] mt-1" style={{ color: "var(--muted)" }}>
+                          {when}
+                          {counts && counts.total > 0 && ` · ${counts.done} / ${counts.total} tasks`}
+                        </div>
+                      </div>
+                      <div className="flex items-center gap-1 shrink-0">
+                        <button onClick={() => void handleCopyGoalToCurrentPeriod(goal)} title="Bring forward"
+                          className="text-[12px] font-semibold rounded-[8px]" style={{ padding: "6px 11px", color: "var(--btn-fg)", background: "var(--btn-primary)" }}>
+                          Bring forward
+                        </button>
+                        <button onClick={() => void handleSetGoalStatus(goal, "achieved")} title="Mark achieved"
+                          className="p-1" style={{ color: "var(--accent)" }}><CheckCircle2 className="w-[15px] h-[15px]" /></button>
+                        <button onClick={() => void handleSetGoalStatus(goal, "dropped")} title="Drop"
+                          className="p-1" style={{ color: "var(--muted2)" }}><X className="w-[15px] h-[15px]" /></button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          ) : (
+          <>
           <div style={{ padding: "14px 22px 4px" }} className="flex flex-col gap-1.5">
             {goalsPanelGoals.length === 0 && !showGoalForm && (
               <div className="text-center rounded-[12px] text-[13px]" style={{ padding: "20px", border: "1px dashed var(--dash2)", color: "var(--muted)" }}>{isCustomPeriod ? "No custom goals yet." : `No goals this ${goalsPanelPeriodType}.`}</div>
@@ -4425,6 +4519,8 @@ export default function HomePage() {
               <button onClick={() => { resetGoalForm(); setShowGoalForm(true); }} className="hovrow w-full text-[13px] text-center rounded-[11px]" style={{ padding: "11px", border: "1px dashed var(--check-bd)", color: "var(--muted5)" }}>+ Add a goal</button>
             )}
           </div>
+          </>
+          )}
         </div>
       )}
 
