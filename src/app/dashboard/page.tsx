@@ -242,6 +242,13 @@ const PRIORITY_META: Record<TaskPriority, { label: string; color: string }> = {
 };
 const DURATION_OPTIONS = [15, 30, 45, 60, 90, 120, 180, 240, 480];
 
+const SETTINGS_SECTIONS = [
+  { id: "tasks", label: "Tasks" },
+  { id: "greeting", label: "Greeting" },
+  { id: "calendar", label: "Calendar" },
+] as const;
+type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
+
 // "yyyy-MM-dd" → local Date (avoids the UTC shift of new Date("2026-07-28"))
 function parseYmd(s: string): Date {
   const [y, m, d] = s.split("-").map(Number);
@@ -330,6 +337,7 @@ export default function HomePage() {
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [autoArchiveCompleted, setAutoArchiveCompleted] = useState(false);
   const [draftAutoArchive, setDraftAutoArchive] = useState(false);
+  const [settingsSection, setSettingsSection] = useState<SettingsSection>("tasks");
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
@@ -2795,7 +2803,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -5007,11 +5015,11 @@ export default function HomePage() {
         <Dialog.Portal>
           <Dialog.Overlay className="fixed inset-0 z-40" style={{ background: "var(--overlay)" }} />
           <Dialog.Content
-            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-[560px] max-h-[90vh] overflow-y-auto rounded-[18px]"
-            style={{ background: "var(--drawer)", border: "1px solid var(--drawer-bd)", boxShadow: "0 30px 70px -30px rgba(70,55,30,0.5)", padding: "26px 28px", color: "var(--ink)" }}
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-50 w-full max-w-[680px] max-h-[86vh] flex flex-col rounded-[18px] overflow-hidden"
+            style={{ background: "var(--drawer)", border: "1px solid var(--drawer-bd)", boxShadow: "0 30px 70px -30px rgba(70,55,30,0.5)", color: "var(--ink)" }}
           >
-            <div className="flex items-center justify-between mb-5">
-              <Dialog.Title style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[24px]">Settings</Dialog.Title>
+            <div className="shrink-0 flex items-center justify-between" style={{ padding: "18px 24px", borderBottom: "1px solid var(--line2)" }}>
+              <Dialog.Title style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[22px]">Settings</Dialog.Title>
               <Dialog.Close asChild>
                 <button className="p-1 text-[20px]" style={{ color: "var(--muted)" }}>✕</button>
               </Dialog.Close>
@@ -5019,11 +5027,24 @@ export default function HomePage() {
 
             <Dialog.Description className="sr-only">Application settings</Dialog.Description>
 
-            <div className="flex flex-col">
-              {/* ── Tasks ── */}
-              <div className="text-[10.5px] tracking-[0.14em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Tasks</div>
-              {/* Completed tasks & archive */}
-              <div className="pb-5" style={{ borderBottom: "1px solid var(--line2)", marginBottom: "22px" }}>
+            {/* nav + pane. Only the pane scrolls, so the footer never leaves. */}
+            <div className="flex-1 min-h-0 flex flex-col sm:flex-row">
+              <nav className="shrink-0 sm:w-[168px] flex sm:flex-col gap-1 overflow-x-auto p-2.5 border-b sm:border-b-0 sm:border-r border-[var(--line2)]">
+                {SETTINGS_SECTIONS.map((sec) => {
+                  const active = settingsSection === sec.id;
+                  return (
+                    <button key={sec.id} onClick={() => setSettingsSection(sec.id)}
+                      className="shrink-0 text-left text-[13px] rounded-[9px] transition-colors whitespace-nowrap"
+                      style={{ padding: "8px 12px", fontWeight: active ? 600 : 400, color: active ? "var(--ink)" : "var(--muted5)", background: active ? "var(--chip)" : "transparent" }}>
+                      {sec.label}
+                    </button>
+                  );
+                })}
+              </nav>
+
+              <div className="flex-1 min-h-0 overflow-y-auto" style={{ padding: "20px 24px" }}>
+              {settingsSection === "tasks" && (
+              <div>
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Completed tasks</label>
                 <p className="text-[12px] mb-2.5" style={{ color: "var(--muted)" }}>
                   Completed tasks stay on the board, crossed off at the bottom of their quadrant, until you archive them.
@@ -5067,11 +5088,12 @@ export default function HomePage() {
                   </div>
                 )}
               </div>
+              )}
 
-              {/* ── Greeting ── */}
-              <div className="text-[10.5px] tracking-[0.14em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Greeting</div>
+              {settingsSection === "greeting" && (
+              <div>
               {/* Weather location */}
-              <div className="pb-4">
+              <div className="pb-5">
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Weather location</label>
                 <p className="text-[12px] mb-2" style={{ color: "var(--muted)" }}>Drives the weather and what-to-wear line in your greeting.</p>
                 <input
@@ -5085,7 +5107,7 @@ export default function HomePage() {
               </div>
 
               {/* Gemini API Key */}
-              <div className="pb-5" style={{ borderBottom: "1px solid var(--line2)", marginBottom: "22px" }}>
+              <div>
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Google Gemini API key</label>
                 <p className="text-[12px] mb-2" style={{ color: "var(--muted)" }}>
                   Used for AI what-to-wear suggestions. Get a free key at{" "}
@@ -5110,9 +5132,10 @@ export default function HomePage() {
                 )}
               </div>
 
-              {/* ── Calendar ── */}
-              <div className="text-[10.5px] tracking-[0.14em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Calendar</div>
-              {/* iCal Calendar Feeds */}
+              </div>
+              )}
+
+              {settingsSection === "calendar" && (
               <div>
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Calendar feeds (iCal)</label>
                 <p className="text-[12px] mb-3" style={{ color: "var(--muted)" }}>
@@ -5157,10 +5180,16 @@ export default function HomePage() {
                   {settingsIcalError && <p className="text-[12px]" style={{ color: "var(--tag-fg)" }}>{settingsIcalError}</p>}
                 </div>
               </div>
+              )}
+              </div>
             </div>
 
-            {/* Footer: discard / apply all */}
-            <div className="flex items-center justify-end gap-2.5 mt-6 pt-4" style={{ borderTop: "1px solid var(--line2)" }}>
+            {/* Footer sits outside the scroll area, so Save is always reachable */}
+            <div className="shrink-0 flex items-center justify-between gap-3" style={{ padding: "14px 24px", borderTop: "1px solid var(--line2)", background: "var(--form-bg)" }}>
+              <span className="text-[12px]" style={{ color: settingsDirty ? "var(--accent)" : "transparent" }}>
+                Unsaved changes
+              </span>
+              <div className="flex items-center gap-2.5">
               <Dialog.Close asChild>
                 <button className="text-[13px] font-medium rounded-[10px]" style={{ padding: "9px 18px", color: "var(--ink2)", background: "var(--chip)" }}>
                   Cancel
@@ -5174,6 +5203,7 @@ export default function HomePage() {
               >
                 Save changes
               </button>
+              </div>
             </div>
           </Dialog.Content>
         </Dialog.Portal>
