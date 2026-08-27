@@ -21,6 +21,7 @@ export interface Task {
   linkedParentId?: ObjectId; // Soft link: task stays top-level in the matrix but also appears under this parent's subtasks
   goalId?: ObjectId;        // Optional link to a weekly/monthly goal
   sortOrder?: number;       // Manual position within its quadrant; lower = higher up (top = Next action)
+  archivedAt?: Date;        // Set when archived; archived tasks drop out of the matrix
 }
 
 export type GoalPeriodType = "week" | "month" | "year" | "custom";
@@ -75,6 +76,7 @@ export interface UserSettings {
   userId: string;
   geminiApiKeyEnc?: string;  // AES-256-GCM encrypted Gemini API key
   icalUrlsEnc?: string;      // AES-256-GCM encrypted JSON array of iCal URLs
+  autoArchiveCompleted?: boolean; // Archive a task as soon as it is completed
   createdAt: Date;
   updatedAt: Date;
 }
