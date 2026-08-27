@@ -1,6 +1,8 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
 import ical, { type VEvent } from "node-ical";
+import { safeFetch } from "~/server/safe-fetch";
 
 // Simple in-memory rate limiting
 const rateLimitMap = new Map<string, { count: number; resetTime: number }>();
@@ -37,6 +39,11 @@ export interface CalendarEvent {
 
 export async function GET(req: NextRequest) {
   try {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+
     const ip = req.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
     if (!checkRateLimit(ip)) {
       return NextResponse.json({ error: "Too many requests" }, { status: 429 });
@@ -49,11 +56,17 @@ export async function GET(req: NextRequest) {
       return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid input" }, { status: 400 });
     }
 
-    // Fetch the iCal feed server-side (avoids CORS issues)
-    const feedRes = await fetch(parsed.data.url, {
-      signal: AbortSignal.timeout(10000),
-      headers: { "User-Agent": "EisenQ Calendar/1.0" },
-    });
+    // Fetch the iCal feed server-side (avoids CORS issues). safeFetch refuses
+    // hosts that resolve to internal addresses, so a user-supplied URL can't
+    // turn this into a proxy into the private network.
+    let feedRes: Response;
+    try {
+      feedRes = await safeFetch(parsed.data.url, {
+        headers: { "User-Agent": "EisenQ Calendar/1.0" },
+      });
+    } catch {
+      return NextResponse.json({ error: "Could not fetch calendar feed" }, { status: 400 });
+    }
     if (!feedRes.ok) {
       return NextResponse.json({ error: "Could not fetch calendar feed" }, { status: 502 });
     }

@@ -1,14 +1,30 @@
 import { clerkMiddleware, createRouteMatcher } from "@clerk/nextjs/server";
+import { NextResponse } from "next/server";
 
-const isProtectedRoute = createRouteMatcher([
-  '/dashboard',
-  '/api/tasks(.*)',
+// Deny by default: everything the matcher below reaches requires a signed-in
+// user unless it is listed here. A new route is private until it is added,
+// rather than public until someone remembers to guard it.
+const isPublicRoute = createRouteMatcher([
+  "/",
+  "/sign-in(.*)",
+  "/sign-up(.*)",
+  "/api/contact",
 ]);
 
 export default clerkMiddleware(async (auth, req) => {
-  if (isProtectedRoute(req)) {
-    await auth.protect();
+  if (isPublicRoute(req)) return;
+
+  // API routes answer 401 rather than redirecting to a sign-in page, so the
+  // client sees the same shape the route handlers already return.
+  if (req.nextUrl.pathname.startsWith("/api/")) {
+    const { userId } = await auth();
+    if (!userId) {
+      return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+    }
+    return;
   }
+
+  await auth.protect();
 });
 
 export const config = {
