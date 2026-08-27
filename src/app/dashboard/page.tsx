@@ -88,6 +88,7 @@ interface Task {
   goalId?: string;
   sortOrder?: number;
   archivedAt?: string;
+  completedAt?: string;
   subtaskCount?: number;
   subtaskCompletedCount?: number;
 }
@@ -328,6 +329,7 @@ export default function HomePage() {
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [geminiApiKey, setGeminiApiKey] = useState("");
   const [autoArchiveCompleted, setAutoArchiveCompleted] = useState(false);
+  const [draftAutoArchive, setDraftAutoArchive] = useState(false);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
@@ -702,6 +704,7 @@ export default function HomePage() {
         }
         if (typeof data.autoArchiveCompleted === "boolean") {
           setAutoArchiveCompleted(data.autoArchiveCompleted);
+          setDraftAutoArchive(data.autoArchiveCompleted);
         }
         if (Array.isArray(data.icalUrls)) {
           setIcalUrls(data.icalUrls);
@@ -726,7 +729,8 @@ export default function HomePage() {
     locationInput.trim() !== weatherLocation ||
     settingsKeyInput.trim() !== geminiApiKey ||
     draftIcalUrls.length !== icalUrls.length ||
-    draftIcalUrls.some((u, i) => u !== icalUrls[i]);
+    draftIcalUrls.some((u, i) => u !== icalUrls[i]) ||
+    draftAutoArchive !== autoArchiveCompleted;
 
   // Apply all staged Settings drafts at once
   const handleSaveSettings = () => {
@@ -755,6 +759,10 @@ export default function HomePage() {
       safeSetItem("eisenq-ical-urls", JSON.stringify(draftIcalUrls));
       persistSettings({ icalUrls: draftIcalUrls });
       if (!draftIcalUrls.length) setCalendarGroups([]);
+    }
+    if (draftAutoArchive !== autoArchiveCompleted) {
+      setAutoArchiveCompleted(draftAutoArchive);
+      persistSettings({ autoArchiveCompleted: draftAutoArchive });
     }
     setSettingsIcalInput("");
     setSettingsIcalError("");
@@ -2022,11 +2030,6 @@ export default function HomePage() {
     }
   };
 
-  const handleToggleAutoArchive = (next: boolean) => {
-    setAutoArchiveCompleted(next);
-    persistSettings({ autoArchiveCompleted: next });
-  };
-
   // Delete the task being edited (its subtasks cascade server-side).
   const handleDeleteTask = async (task: Task) => {
     setTasks(prev => prev.filter(t => t._id !== task._id));
@@ -2058,7 +2061,7 @@ export default function HomePage() {
         body: JSON.stringify({
           _id: task._id,
           status: newStatus,
-          completedAt: task.status === "completed" ? null : new Date()
+          completedAt: task.status === "completed" ? null : new Date().toISOString()
         })
       });
       
@@ -2792,7 +2795,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -4006,6 +4009,13 @@ export default function HomePage() {
                                       {format(new Date(t.dueDate), "MMM d")}
                                     </span>
                                   )}
+                                  {t.status === "completed" && t.completedAt && (
+                                    <span className="text-[12px] font-normal shrink-0 tabular-nums"
+                                      title={`Completed ${format(new Date(t.completedAt), "PPpp")}`}
+                                      style={{ color: "var(--muted4)" }}>
+                                      Done {format(new Date(t.completedAt), "MMM d")}
+                                    </span>
+                                  )}
                                   {quadrant === SCHEDULE_QUADRANT && !t.dueDate && t.status !== "completed" && renderScheduleButton(t)}
                                   {formatShortDuration(t.duration) && t.status !== "completed" && (
                                     <span className="text-[12px] font-normal shrink-0 inline-flex items-center gap-[3px] tabular-nums" style={{ color: "var(--muted4)" }}>
@@ -5010,19 +5020,21 @@ export default function HomePage() {
             <Dialog.Description className="sr-only">Application settings</Dialog.Description>
 
             <div className="flex flex-col">
+              {/* ── Tasks ── */}
+              <div className="text-[10.5px] tracking-[0.14em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Tasks</div>
               {/* Completed tasks & archive */}
-              <div className="pb-5" style={{ borderBottom: "1px solid var(--line2)", marginBottom: "20px" }}>
+              <div className="pb-5" style={{ borderBottom: "1px solid var(--line2)", marginBottom: "22px" }}>
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Completed tasks</label>
                 <p className="text-[12px] mb-2.5" style={{ color: "var(--muted)" }}>
                   Completed tasks stay on the board, crossed off at the bottom of their quadrant, until you archive them.
                 </p>
 
-                <button onClick={() => handleToggleAutoArchive(!autoArchiveCompleted)}
+                <button onClick={() => setDraftAutoArchive(v => !v)}
                   className="w-full flex items-center justify-between gap-3 rounded-[10px] text-left"
                   style={{ padding: "10px 12px", background: "var(--field)", border: "1px solid var(--field-bd)" }}>
                   <span className="text-[13px]" style={{ color: "var(--ink2)" }}>Archive automatically when completed</span>
-                  <span className="shrink-0 rounded-full transition-colors" style={{ width: 36, height: 20, padding: 2, background: autoArchiveCompleted ? "var(--pill-active)" : "var(--check-bd)" }}>
-                    <span className="block rounded-full transition-transform" style={{ width: 16, height: 16, background: "var(--btn-fg)", transform: autoArchiveCompleted ? "translateX(16px)" : "translateX(0)" }} />
+                  <span className="shrink-0 rounded-full transition-colors" style={{ width: 36, height: 20, padding: 2, background: draftAutoArchive ? "var(--pill-active)" : "var(--check-bd)" }}>
+                    <span className="block rounded-full transition-transform" style={{ width: 16, height: 16, background: "var(--btn-fg)", transform: draftAutoArchive ? "translateX(16px)" : "translateX(0)" }} />
                   </span>
                 </button>
 
@@ -5056,8 +5068,10 @@ export default function HomePage() {
                 )}
               </div>
 
+              {/* ── Greeting ── */}
+              <div className="text-[10.5px] tracking-[0.14em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Greeting</div>
               {/* Weather location */}
-              <div className="pb-5">
+              <div className="pb-4">
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Weather location</label>
                 <p className="text-[12px] mb-2" style={{ color: "var(--muted)" }}>Drives the weather and what-to-wear line in your greeting.</p>
                 <input
@@ -5070,10 +5084,8 @@ export default function HomePage() {
                 />
               </div>
 
-              <div style={{ borderTop: "1px solid var(--line2)" }} />
-
               {/* Gemini API Key */}
-              <div className="py-5">
+              <div className="pb-5" style={{ borderBottom: "1px solid var(--line2)", marginBottom: "22px" }}>
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Google Gemini API key</label>
                 <p className="text-[12px] mb-2" style={{ color: "var(--muted)" }}>
                   Used for AI what-to-wear suggestions. Get a free key at{" "}
@@ -5098,10 +5110,10 @@ export default function HomePage() {
                 )}
               </div>
 
-              <div style={{ borderTop: "1px solid var(--line2)" }} />
-
+              {/* ── Calendar ── */}
+              <div className="text-[10.5px] tracking-[0.14em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Calendar</div>
               {/* iCal Calendar Feeds */}
-              <div className="pt-5">
+              <div>
                 <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Calendar feeds (iCal)</label>
                 <p className="text-[12px] mb-3" style={{ color: "var(--muted)" }}>
                   Add .ics feed URLs from Google, Apple, or Outlook. Today&apos;s events appear next to your routine. For Google, use the <strong>Secret address in iCal format</strong> — not the public URL.
