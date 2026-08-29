@@ -246,6 +246,7 @@ const SETTINGS_SECTIONS = [
   { id: "tasks", label: "Tasks" },
   { id: "greeting", label: "Greeting" },
   { id: "calendar", label: "Calendar" },
+  { id: "integrations", label: "Integrations" },
 ] as const;
 type SettingsSection = (typeof SETTINGS_SECTIONS)[number]["id"];
 
@@ -338,6 +339,10 @@ export default function HomePage() {
   const [autoArchiveCompleted, setAutoArchiveCompleted] = useState(false);
   const [draftAutoArchive, setDraftAutoArchive] = useState(false);
   const [settingsSection, setSettingsSection] = useState<SettingsSection>("tasks");
+  const [financeApiUrl, setFinanceApiUrl] = useState("");
+  const [financeApiKey, setFinanceApiKey] = useState("");
+  const [draftFinanceUrl, setDraftFinanceUrl] = useState("");
+  const [draftFinanceKey, setDraftFinanceKey] = useState("");
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
@@ -705,7 +710,7 @@ export default function HomePage() {
       try {
         const res = await fetch("/api/settings");
         if (!res.ok) return;
-        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean };
+        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string };
         if (typeof data.geminiApiKey === "string") {
           setGeminiApiKey(data.geminiApiKey);
           if (data.geminiApiKey) safeSetItem("eisenq-gemini-api-key", data.geminiApiKey);
@@ -714,6 +719,14 @@ export default function HomePage() {
         if (typeof data.autoArchiveCompleted === "boolean") {
           setAutoArchiveCompleted(data.autoArchiveCompleted);
           setDraftAutoArchive(data.autoArchiveCompleted);
+        }
+        if (typeof data.financeApiUrl === "string") {
+          setFinanceApiUrl(data.financeApiUrl);
+          setDraftFinanceUrl(data.financeApiUrl);
+        }
+        if (typeof data.financeApiKey === "string") {
+          setFinanceApiKey(data.financeApiKey);
+          setDraftFinanceKey(data.financeApiKey);
         }
         if (Array.isArray(data.icalUrls)) {
           setIcalUrls(data.icalUrls);
@@ -725,7 +738,7 @@ export default function HomePage() {
 
   // Persist settings to the encrypted DB. localStorage cache is updated by callers
   // for instant reads; this fire-and-forget call keeps the server in sync.
-  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean }) => {
+  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string }) => {
     void fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -739,7 +752,9 @@ export default function HomePage() {
     settingsKeyInput.trim() !== geminiApiKey ||
     draftIcalUrls.length !== icalUrls.length ||
     draftIcalUrls.some((u, i) => u !== icalUrls[i]) ||
-    draftAutoArchive !== autoArchiveCompleted;
+    draftAutoArchive !== autoArchiveCompleted ||
+    draftFinanceUrl.trim() !== financeApiUrl ||
+    draftFinanceKey.trim() !== financeApiKey;
 
   // Apply all staged Settings drafts at once
   const handleSaveSettings = () => {
@@ -772,6 +787,15 @@ export default function HomePage() {
     if (draftAutoArchive !== autoArchiveCompleted) {
       setAutoArchiveCompleted(draftAutoArchive);
       persistSettings({ autoArchiveCompleted: draftAutoArchive });
+    }
+    const fUrl = draftFinanceUrl.trim();
+    const fKey = draftFinanceKey.trim();
+    if (fUrl !== financeApiUrl || fKey !== financeApiKey) {
+      setFinanceApiUrl(fUrl);
+      setFinanceApiKey(fKey);
+      persistSettings({ financeApiUrl: fUrl, financeApiKey: fKey });
+      // The day-ends strip is driven by this endpoint, so refresh it once saved.
+      setTimeout(() => void fetchPaymentsDue(), 400);
     }
     setSettingsIcalInput("");
     setSettingsIcalError("");
@@ -2832,7 +2856,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setDraftFinanceUrl(financeApiUrl); setDraftFinanceKey(financeApiKey); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -5274,6 +5298,50 @@ export default function HomePage() {
                     </button>
                   </div>
                   {settingsIcalError && <p className="text-[12px]" style={{ color: "var(--tag-fg)" }}>{settingsIcalError}</p>}
+                </div>
+              </div>
+              )}
+
+              {settingsSection === "integrations" && (
+              <div>
+                <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>CashFold API integration</label>
+                <p className="text-[12px] mb-3" style={{ color: "var(--muted)" }}>
+                  Connect your CashFold account to show what&apos;s due today and where the day ends, above the Priority Matrix. Your endpoint and key are encrypted and used only for your own dashboard.
+                </p>
+
+                <label className="block text-[12px] mb-1.5" style={{ color: "var(--ink3)" }}>API endpoint</label>
+                <input
+                  type="text"
+                  value={draftFinanceUrl}
+                  onChange={(e) => setDraftFinanceUrl(e.target.value)}
+                  placeholder="https://api.cashfold.com/v1/day/{date}"
+                  className="w-full text-[13px] rounded-[10px] outline-none mb-1.5 font-mono"
+                  style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
+                />
+                <p className="text-[11.5px] mb-4" style={{ color: "var(--muted)" }}>
+                  Use <strong>{"{date}"}</strong> where the day should go. Without it, <code>?date=YYYY-MM-DD</code> is appended.
+                </p>
+
+                <label className="block text-[12px] mb-1.5" style={{ color: "var(--ink3)" }}>API key</label>
+                <input
+                  type="password"
+                  value={draftFinanceKey}
+                  onChange={(e) => setDraftFinanceKey(e.target.value)}
+                  placeholder="Sent as the X-API-Key header"
+                  className="w-full text-[13px] rounded-[10px] outline-none"
+                  style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
+                />
+
+                <div className="flex items-center justify-between gap-3 mt-3">
+                  <span className="text-[12px]" style={{ color: financeApiUrl ? "var(--accent)" : "var(--muted)" }}>
+                    {financeApiUrl ? "Connected" : "Not connected"}
+                  </span>
+                  {(draftFinanceUrl || draftFinanceKey) && (
+                    <button onClick={() => { setDraftFinanceUrl(""); setDraftFinanceKey(""); }}
+                      className="text-[12.5px] font-semibold" style={{ color: "var(--tag-fg)" }}>
+                      Disconnect
+                    </button>
+                  )}
                 </div>
               </div>
               )}

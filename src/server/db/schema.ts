@@ -77,6 +77,8 @@ export interface UserSettings {
   geminiApiKeyEnc?: string;  // AES-256-GCM encrypted Gemini API key
   icalUrlsEnc?: string;      // AES-256-GCM encrypted JSON array of iCal URLs
   autoArchiveCompleted?: boolean; // Archive a task as soon as it is completed
+  financeApiUrlEnc?: string; // AES-256-GCM encrypted CashFold API URL
+  financeApiKeyEnc?: string; // AES-256-GCM encrypted CashFold API key
   createdAt: Date;
   updatedAt: Date;
 }
