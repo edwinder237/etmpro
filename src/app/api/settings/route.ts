@@ -8,6 +8,8 @@ const updateSettingsSchema = z.object({
   geminiApiKey: z.string().max(200).optional(),
   icalUrls: z.array(z.string().url()).max(10).optional(),
   autoArchiveCompleted: z.boolean().optional(),
+  financeApiUrl: z.string().max(500).optional(),
+  financeApiKey: z.string().max(200).optional(),
 });
 
 export async function GET() {
@@ -21,6 +23,8 @@ export async function GET() {
 
     let geminiApiKey = "";
     let icalUrls: string[] = [];
+    let financeApiUrl = "";
+    let financeApiKey = "";
 
     if (doc?.geminiApiKeyEnc) {
       try { geminiApiKey = decrypt(doc.geminiApiKeyEnc); } catch { /* corrupt/rotated key */ }
@@ -28,9 +32,15 @@ export async function GET() {
     if (doc?.icalUrlsEnc) {
       try { icalUrls = JSON.parse(decrypt(doc.icalUrlsEnc)) as string[]; } catch { /* corrupt/rotated key */ }
     }
+    if (doc?.financeApiUrlEnc) {
+      try { financeApiUrl = decrypt(doc.financeApiUrlEnc); } catch { /* corrupt/rotated key */ }
+    }
+    if (doc?.financeApiKeyEnc) {
+      try { financeApiKey = decrypt(doc.financeApiKeyEnc); } catch { /* corrupt/rotated key */ }
+    }
 
     return NextResponse.json(
-      { geminiApiKey, icalUrls, autoArchiveCompleted: doc?.autoArchiveCompleted ?? false },
+      { geminiApiKey, icalUrls, autoArchiveCompleted: doc?.autoArchiveCompleted ?? false, financeApiUrl, financeApiKey },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch {
@@ -54,7 +64,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { geminiApiKey, icalUrls, autoArchiveCompleted } = parsed.data;
+    const { geminiApiKey, icalUrls, autoArchiveCompleted, financeApiUrl, financeApiKey } = parsed.data;
 
     const set: Record<string, unknown> = { updatedAt: new Date() };
     const unset: Record<string, ""> = {};
@@ -69,6 +79,14 @@ export async function PUT(request: NextRequest) {
     }
     if (autoArchiveCompleted !== undefined) {
       set.autoArchiveCompleted = autoArchiveCompleted;
+    }
+    if (financeApiUrl !== undefined) {
+      if (financeApiUrl.trim()) set.financeApiUrlEnc = encrypt(financeApiUrl.trim());
+      else unset.financeApiUrlEnc = "";
+    }
+    if (financeApiKey !== undefined) {
+      if (financeApiKey.trim()) set.financeApiKeyEnc = encrypt(financeApiKey.trim());
+      else unset.financeApiKeyEnc = "";
     }
 
     const update: Record<string, unknown> = {
