@@ -79,6 +79,7 @@ export interface UserSettings {
   autoArchiveCompleted?: boolean; // Archive a task as soon as it is completed
   financeApiUrlEnc?: string; // AES-256-GCM encrypted CashFold API URL
   financeApiKeyEnc?: string; // AES-256-GCM encrypted CashFold API key
+  financeUserIdEnc?: string; // AES-256-GCM encrypted CashFold user id (sent as ?userId=)
   createdAt: Date;
   updatedAt: Date;
 }

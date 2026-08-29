@@ -343,6 +343,8 @@ export default function HomePage() {
   const [financeApiKey, setFinanceApiKey] = useState("");
   const [draftFinanceUrl, setDraftFinanceUrl] = useState("");
   const [draftFinanceKey, setDraftFinanceKey] = useState("");
+  const [financeUserId, setFinanceUserId] = useState("");
+  const [draftFinanceUserId, setDraftFinanceUserId] = useState("");
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
@@ -710,7 +712,7 @@ export default function HomePage() {
       try {
         const res = await fetch("/api/settings");
         if (!res.ok) return;
-        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string };
+        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string; financeUserId?: string };
         if (typeof data.geminiApiKey === "string") {
           setGeminiApiKey(data.geminiApiKey);
           if (data.geminiApiKey) safeSetItem("eisenq-gemini-api-key", data.geminiApiKey);
@@ -728,6 +730,10 @@ export default function HomePage() {
           setFinanceApiKey(data.financeApiKey);
           setDraftFinanceKey(data.financeApiKey);
         }
+        if (typeof data.financeUserId === "string") {
+          setFinanceUserId(data.financeUserId);
+          setDraftFinanceUserId(data.financeUserId);
+        }
         if (Array.isArray(data.icalUrls)) {
           setIcalUrls(data.icalUrls);
           safeSetItem("eisenq-ical-urls", JSON.stringify(data.icalUrls));
@@ -738,7 +744,7 @@ export default function HomePage() {
 
   // Persist settings to the encrypted DB. localStorage cache is updated by callers
   // for instant reads; this fire-and-forget call keeps the server in sync.
-  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string }) => {
+  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string; financeUserId?: string }) => {
     void fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -754,7 +760,8 @@ export default function HomePage() {
     draftIcalUrls.some((u, i) => u !== icalUrls[i]) ||
     draftAutoArchive !== autoArchiveCompleted ||
     draftFinanceUrl.trim() !== financeApiUrl ||
-    draftFinanceKey.trim() !== financeApiKey;
+    draftFinanceKey.trim() !== financeApiKey ||
+    draftFinanceUserId.trim() !== financeUserId;
 
   // Apply all staged Settings drafts at once
   const handleSaveSettings = () => {
@@ -790,10 +797,12 @@ export default function HomePage() {
     }
     const fUrl = draftFinanceUrl.trim();
     const fKey = draftFinanceKey.trim();
-    if (fUrl !== financeApiUrl || fKey !== financeApiKey) {
+    const fUid = draftFinanceUserId.trim();
+    if (fUrl !== financeApiUrl || fKey !== financeApiKey || fUid !== financeUserId) {
       setFinanceApiUrl(fUrl);
       setFinanceApiKey(fKey);
-      persistSettings({ financeApiUrl: fUrl, financeApiKey: fKey });
+      setFinanceUserId(fUid);
+      persistSettings({ financeApiUrl: fUrl, financeApiKey: fKey, financeUserId: fUid });
       // The day-ends strip is driven by this endpoint, so refresh it once saved.
       setTimeout(() => void fetchPaymentsDue(), 400);
     }
@@ -2856,7 +2865,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setDraftFinanceUrl(financeApiUrl); setDraftFinanceKey(financeApiKey); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setDraftFinanceUrl(financeApiUrl); setDraftFinanceKey(financeApiKey); setDraftFinanceUserId(financeUserId); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -5322,6 +5331,19 @@ export default function HomePage() {
                   Use <strong>{"{date}"}</strong> where the day should go. Without it, <code>?date=YYYY-MM-DD</code> is appended.
                 </p>
 
+                <label className="block text-[12px] mb-1.5" style={{ color: "var(--ink3)" }}>CashFold user ID</label>
+                <input
+                  type="text"
+                  value={draftFinanceUserId}
+                  onChange={(e) => setDraftFinanceUserId(e.target.value)}
+                  placeholder="df29c04e-9afb-4267-bc55-69822cb80229"
+                  className="w-full text-[13px] rounded-[10px] outline-none mb-1.5 font-mono"
+                  style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
+                />
+                <p className="text-[11.5px] mb-4" style={{ color: "var(--muted)" }}>
+                  Sent as <code>?userId=</code>. Overrides any userId already in the endpoint above.
+                </p>
+
                 <label className="block text-[12px] mb-1.5" style={{ color: "var(--ink3)" }}>API key</label>
                 <input
                   type="password"
@@ -5336,8 +5358,8 @@ export default function HomePage() {
                   <span className="text-[12px]" style={{ color: financeApiUrl ? "var(--accent)" : "var(--muted)" }}>
                     {financeApiUrl ? "Connected" : "Not connected"}
                   </span>
-                  {(draftFinanceUrl || draftFinanceKey) && (
-                    <button onClick={() => { setDraftFinanceUrl(""); setDraftFinanceKey(""); }}
+                  {(draftFinanceUrl || draftFinanceKey || draftFinanceUserId) && (
+                    <button onClick={() => { setDraftFinanceUrl(""); setDraftFinanceKey(""); setDraftFinanceUserId(""); }}
                       className="text-[12.5px] font-semibold" style={{ color: "var(--tag-fg)" }}>
                       Disconnect
                     </button>

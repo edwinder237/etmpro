@@ -23,11 +23,15 @@ export async function GET(request: NextRequest) {
 
     let apiUrl = "";
     let apiKey = "";
+    let financeUserId = "";
     if (doc?.financeApiUrlEnc) {
       try { apiUrl = decrypt(doc.financeApiUrlEnc); } catch { /* corrupt/rotated key */ }
     }
     if (doc?.financeApiKeyEnc) {
       try { apiKey = decrypt(doc.financeApiKeyEnc); } catch { /* corrupt/rotated key */ }
+    }
+    if (doc?.financeUserIdEnc) {
+      try { financeUserId = decrypt(doc.financeUserIdEnc); } catch { /* corrupt/rotated key */ }
     }
 
     if (!apiUrl) {
@@ -39,20 +43,17 @@ export async function GET(request: NextRequest) {
       return NextResponse.json({ error: "date must be YYYY-MM-DD" }, { status: 400 });
     }
 
-    // Support a {date} placeholder in the configured URL, otherwise append ?date=
-    let url: string;
-    if (apiUrl.includes("{date}")) {
-      url = apiUrl.replaceAll("{date}", date);
-    } else {
-      let u: URL;
-      try {
-        u = new URL(apiUrl);
-      } catch {
-        return NextResponse.json({ error: "Configured API URL is not valid" }, { status: 400 });
-      }
-      u.searchParams.set("date", date);
-      url = u.toString();
+    // Support a {date} placeholder in the configured URL, otherwise append ?date=.
+    // A configured user id always wins, so the URL doesn't have to carry it.
+    let u: URL;
+    try {
+      u = new URL(apiUrl.includes("{date}") ? apiUrl.replaceAll("{date}", date) : apiUrl);
+    } catch {
+      return NextResponse.json({ error: "Configured API URL is not valid" }, { status: 400 });
     }
+    u.searchParams.set("date", date);
+    if (financeUserId) u.searchParams.set("userId", financeUserId);
+    const url = u.toString();
 
     // The URL comes from the user, so it goes through the same guard as calendar
     // feeds — otherwise this becomes a proxy into the private network.
@@ -67,9 +68,22 @@ export async function GET(request: NextRequest) {
     }
 
     if (!res.ok) {
-      console.error("Payments: finance API responded with status", res.status);
+      // Echo enough to diagnose without leaking the key: what the upstream said,
+      // whether a key was actually attached, and where the request went.
+      let upstreamBody = "";
+      try { upstreamBody = (await res.text()).slice(0, 300); } catch { /* body may be empty */ }
+      console.error("Payments: finance API responded with status", res.status, upstreamBody);
       return NextResponse.json(
-        { error: "Finance API request failed", upstreamStatus: res.status },
+        {
+          error: "Finance API request failed",
+          upstreamStatus: res.status,
+          upstreamBody,
+          keySent: Boolean(apiKey),
+          userIdSent: Boolean(u.searchParams.get("userId")),
+          requestedHost: new URL(url).host,
+          requestedPath: new URL(url).pathname,
+          sentParams: [...new URL(url).searchParams.keys()],
+        },
         { status: 502 }
       );
     }
