@@ -10,6 +10,7 @@ const updateSettingsSchema = z.object({
   autoArchiveCompleted: z.boolean().optional(),
   financeApiUrl: z.string().max(500).optional(),
   financeApiKey: z.string().max(200).optional(),
+  financeUserId: z.string().max(200).optional(),
 });
 
 export async function GET() {
@@ -25,6 +26,7 @@ export async function GET() {
     let icalUrls: string[] = [];
     let financeApiUrl = "";
     let financeApiKey = "";
+    let financeUserId = "";
 
     if (doc?.geminiApiKeyEnc) {
       try { geminiApiKey = decrypt(doc.geminiApiKeyEnc); } catch { /* corrupt/rotated key */ }
@@ -38,9 +40,12 @@ export async function GET() {
     if (doc?.financeApiKeyEnc) {
       try { financeApiKey = decrypt(doc.financeApiKeyEnc); } catch { /* corrupt/rotated key */ }
     }
+    if (doc?.financeUserIdEnc) {
+      try { financeUserId = decrypt(doc.financeUserIdEnc); } catch { /* corrupt/rotated key */ }
+    }
 
     return NextResponse.json(
-      { geminiApiKey, icalUrls, autoArchiveCompleted: doc?.autoArchiveCompleted ?? false, financeApiUrl, financeApiKey },
+      { geminiApiKey, icalUrls, autoArchiveCompleted: doc?.autoArchiveCompleted ?? false, financeApiUrl, financeApiKey, financeUserId },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch {
@@ -64,7 +69,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { geminiApiKey, icalUrls, autoArchiveCompleted, financeApiUrl, financeApiKey } = parsed.data;
+    const { geminiApiKey, icalUrls, autoArchiveCompleted, financeApiUrl, financeApiKey, financeUserId } = parsed.data;
 
     const set: Record<string, unknown> = { updatedAt: new Date() };
     const unset: Record<string, ""> = {};
@@ -87,6 +92,10 @@ export async function PUT(request: NextRequest) {
     if (financeApiKey !== undefined) {
       if (financeApiKey.trim()) set.financeApiKeyEnc = encrypt(financeApiKey.trim());
       else unset.financeApiKeyEnc = "";
+    }
+    if (financeUserId !== undefined) {
+      if (financeUserId.trim()) set.financeUserIdEnc = encrypt(financeUserId.trim());
+      else unset.financeUserIdEnc = "";
     }
 
     const update: Record<string, unknown> = {
