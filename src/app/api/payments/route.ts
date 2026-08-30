@@ -79,6 +79,9 @@ export async function GET(request: NextRequest) {
           upstreamStatus: res.status,
           upstreamBody,
           keySent: Boolean(apiKey),
+          // Enough to compare against the key you expect, without printing it.
+          keyLength: apiKey.length,
+          keyPreview: apiKey ? `${apiKey.slice(0, 6)}…${apiKey.slice(-4)}` : "",
           userIdSent: Boolean(u.searchParams.get("userId")),
           requestedHost: new URL(url).host,
           requestedPath: new URL(url).pathname,
