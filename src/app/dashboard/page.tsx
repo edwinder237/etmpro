@@ -256,6 +256,22 @@ function parseYmd(s: string): Date {
   return new Date(y ?? 1970, (m ?? 1) - 1, d ?? 1);
 }
 
+// Today in the browser's own timezone. Never toISOString() for this: that
+// converts to UTC and hands back yesterday for anyone west of Greenwich.
+function todayYmd(): string {
+  return format(new Date(), "yyyy-MM-dd");
+}
+
+// Steps a "yyyy-MM-dd" by whole days without leaving local calendar time.
+// Anchored at noon so a DST jump can never push the result into the adjacent
+// day; setDate handles month and year rollover on its own.
+function shiftYmd(s: string, days: number): string {
+  const d = parseYmd(s);
+  d.setHours(12, 0, 0, 0);
+  d.setDate(d.getDate() + days);
+  return format(d, "yyyy-MM-dd");
+}
+
 // Per-quadrant "next action" choice: a task id pins that task as the headline,
 // NEXT_ACTION_CLEARED leaves the slot deliberately empty. Absent = auto-pick.
 const NEXT_ACTION_CLEARED = "__none__";
@@ -345,6 +361,8 @@ export default function HomePage() {
   const [draftFinanceKey, setDraftFinanceKey] = useState("");
   const [financeUserId, setFinanceUserId] = useState("");
   const [draftFinanceUserId, setDraftFinanceUserId] = useState("");
+  const [financeTesting, setFinanceTesting] = useState(false);
+  const [financeTestResult, setFinanceTestResult] = useState<{ ok: boolean; message: string } | null>(null);
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
@@ -388,6 +406,8 @@ export default function HomePage() {
   const [maintenanceFormData, setMaintenanceFormData] = useState({ title: "", description: "", intervalDays: 90, nextDueDate: "" });
   const [paymentsData, setPaymentsData] = useState<PaymentsDueData | null>(null);
   const [paymentsError, setPaymentsError] = useState(false);
+  // Which day the payments bar is showing. Always a local calendar date.
+  const [paymentsDate, setPaymentsDate] = useState<string>(() => todayYmd());
   const [expandedPaymentAccounts, setExpandedPaymentAccounts] = useState<Set<string>>(new Set());
   const [paidPaymentAccounts, setPaidPaymentAccounts] = useState<Set<string>>(new Set());
   const [editingChecklistItem, setEditingChecklistItem] = useState<ChecklistItem | null>(null);
@@ -660,13 +680,19 @@ export default function HomePage() {
     void fetchGoals();
     void fetchChecklistItems();
     void fetchMaintenanceItems();
-    void fetchPaymentsDue();
-    // Restore today's locally-tracked paid accounts
-    try {
-      const stored = localStorage.getItem(`eisenq-payments-paid-${format(new Date(), "yyyy-MM-dd")}`);
-      if (stored) setPaidPaymentAccounts(new Set(JSON.parse(stored) as string[]));
-    } catch { /* ignore */ }
   }, []);
+
+  // Reload whenever the viewed day changes, and swap in that day's paid set so
+  // the ticks belong to the date on screen rather than to today.
+  useEffect(() => {
+    void fetchPaymentsDue(paymentsDate);
+    try {
+      const stored = localStorage.getItem(`eisenq-payments-paid-${paymentsDate}`);
+      setPaidPaymentAccounts(stored ? new Set(JSON.parse(stored) as string[]) : new Set());
+    } catch {
+      setPaidPaymentAccounts(new Set());
+    }
+  }, [paymentsDate]);
 
   // Initialize dark mode from localStorage or system preference
   useEffect(() => {
@@ -752,6 +778,34 @@ export default function HomePage() {
     }).catch(() => { /* ignore — cache still holds the value */ });
   }, []);
 
+  // Runs one real request against whatever is typed in the Integrations form,
+  // so credentials can be checked before saving them.
+  const handleTestFinanceConnection = useCallback(async () => {
+    setFinanceTesting(true);
+    setFinanceTestResult(null);
+    try {
+      const res = await fetch("/api/payments/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          financeApiUrl: draftFinanceUrl.trim(),
+          financeApiKey: draftFinanceKey.trim(),
+          financeUserId: draftFinanceUserId.trim(),
+          date: format(new Date(), "yyyy-MM-dd"),
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; message?: string; error?: string };
+      setFinanceTestResult({
+        ok: data.ok === true,
+        message: data.message ?? data.error ?? "The test could not be run.",
+      });
+    } catch {
+      setFinanceTestResult({ ok: false, message: "The test could not be run. Check your connection." });
+    } finally {
+      setFinanceTesting(false);
+    }
+  }, [draftFinanceUrl, draftFinanceKey, draftFinanceUserId]);
+
   // Whether the Settings drafts differ from the applied values
   const settingsDirty =
     locationInput.trim() !== weatherLocation ||
@@ -804,7 +858,7 @@ export default function HomePage() {
       setFinanceUserId(fUid);
       persistSettings({ financeApiUrl: fUrl, financeApiKey: fKey, financeUserId: fUid });
       // The day-ends strip is driven by this endpoint, so refresh it once saved.
-      setTimeout(() => void fetchPaymentsDue(), 400);
+      setTimeout(() => void fetchPaymentsDue(paymentsDate), 400);
     }
     setSettingsIcalInput("");
     setSettingsIcalError("");
@@ -1809,11 +1863,13 @@ export default function HomePage() {
     );
   };
 
-  // Payments due (external finance API, grouped by account)
-  const fetchPaymentsDue = async () => {
+  // Payments due (external finance API, grouped by account). The date is a
+  // local calendar string end to end — it is never turned into a Date and back,
+  // so no timezone conversion can shift the day the user asked for.
+  const fetchPaymentsDue = async (date: string) => {
     setPaymentsError(false);
     try {
-      const res = await fetch(`/api/payments?date=${format(new Date(), "yyyy-MM-dd")}`);
+      const res = await fetch(`/api/payments?date=${date}`);
       if (res.ok) {
         setPaymentsData(await res.json() as PaymentsDueData);
       } else {
@@ -1824,8 +1880,10 @@ export default function HomePage() {
     }
   };
 
-  // Paid state is per-day and local-only until the finance API supports write-back
-  const paidPaymentsStorageKey = () => `eisenq-payments-paid-${format(new Date(), "yyyy-MM-dd")}`;
+  // Paid state is per-day and local-only until the finance API supports
+  // write-back. It keys off the day being viewed, so ticking something off
+  // while browsing another date can't land on today's list.
+  const paidPaymentsStorageKey = () => `eisenq-payments-paid-${paymentsDate}`;
 
   const togglePaymentAccountPaid = (accountId: string) => {
     const wasPaid = paidPaymentAccounts.has(accountId);
@@ -2804,6 +2862,61 @@ export default function HomePage() {
     : null;
 
   // Payments summary for the slim due-bar
+  const paymentsDateIsToday = paymentsDate === todayYmd();
+
+  // Day picker for the payments strip. Every value here is a "yyyy-MM-dd"
+  // string: the native date input reads and writes local calendar dates
+  // directly, and shiftYmd stays in local time, so nothing can slip a day.
+  const renderPaymentsDateNav = () => (
+    <div className="flex items-center gap-1" onClick={(e) => e.stopPropagation()}>
+      <button
+        onClick={() => setPaymentsDate(shiftYmd(paymentsDate, -1))}
+        aria-label="Previous day"
+        title="Previous day"
+        className="w-[22px] h-[22px] rounded-[7px] flex items-center justify-center text-[13px] leading-none"
+        style={{ background: "var(--chip)", color: "var(--muted5)" }}
+      >
+        ‹
+      </button>
+
+      <label className="relative flex items-center">
+        <span
+          className="text-[12px] px-1.5 cursor-pointer whitespace-nowrap"
+          style={{ color: paymentsDateIsToday ? "var(--muted)" : "var(--ink3)" }}
+        >
+          {paymentsDateIsToday ? "Today" : format(parseYmd(paymentsDate), "EEE, MMM d")}
+        </span>
+        <input
+          type="date"
+          value={paymentsDate}
+          onChange={(e) => { if (e.target.value) setPaymentsDate(e.target.value); }}
+          aria-label="Show payments for a specific date"
+          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer"
+        />
+      </label>
+
+      <button
+        onClick={() => setPaymentsDate(shiftYmd(paymentsDate, 1))}
+        aria-label="Next day"
+        title="Next day"
+        className="w-[22px] h-[22px] rounded-[7px] flex items-center justify-center text-[13px] leading-none"
+        style={{ background: "var(--chip)", color: "var(--muted5)" }}
+      >
+        ›
+      </button>
+
+      {!paymentsDateIsToday && (
+        <button
+          onClick={() => setPaymentsDate(todayYmd())}
+          className="text-[11.5px] font-semibold ml-1"
+          style={{ color: "var(--accent)" }}
+        >
+          Today
+        </button>
+      )}
+    </div>
+  );
+
   const paymentsSummary = (() => {
     if (!paymentsData?.configured) return null;
     const accounts = paymentsData.accounts ?? [];
@@ -2865,7 +2978,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setDraftFinanceUrl(financeApiUrl); setDraftFinanceKey(financeApiKey); setDraftFinanceUserId(financeUserId); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setDraftFinanceUrl(financeApiUrl); setDraftFinanceKey(financeApiKey); setDraftFinanceUserId(financeUserId); setFinanceTestResult(null); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -3916,7 +4029,7 @@ export default function HomePage() {
           <div className="flex items-center gap-2 px-1 text-[12.5px]" style={{ color: "var(--muted)" }}>
             <AlertCircle className="w-3.5 h-3.5" />
             Couldn&apos;t load payments
-            <button onClick={() => void fetchPaymentsDue()} className="font-semibold" style={{ color: "var(--accent)" }}>Retry</button>
+            <button onClick={() => void fetchPaymentsDue(paymentsDate)} className="font-semibold" style={{ color: "var(--accent)" }}>Retry</button>
           </div>
         </div>
       )}
@@ -3930,6 +4043,7 @@ export default function HomePage() {
               style={{ background: "var(--card)", border: "1px solid var(--card-bd)" }}>
               <div className="flex items-center gap-[13px]">
                 <span className="text-[11px] tracking-[0.12em] uppercase" style={{ color: "var(--muted2)" }}>Payments due</span>
+                {renderPaymentsDateNav()}
                 <span className="w-[13px] h-[13px] rounded-full shrink-0" style={{ border: "1.5px solid var(--accent)" }} />
                 <span className="text-[15px] font-semibold" style={{ color: "var(--ink)" }}>{fmtMoney(paymentsSummary.totalDue)}</span>
                 <span className="text-[12px]" style={{ color: "var(--muted)" }}>· {paymentsSummary.count} payment{paymentsSummary.count === 1 ? "" : "s"}</span>
@@ -3944,7 +4058,8 @@ export default function HomePage() {
           ) : (
             <div className="flex items-center gap-[10px] px-1 pt-1.5 pb-0.5 text-[12.5px]" style={{ color: "var(--muted)" }}>
               <span className="w-[15px] h-[15px] rounded-full flex items-center justify-center text-[9px]" style={{ border: "1.5px solid var(--accent)", color: "var(--accent)" }}>✓</span>
-              Nothing due today — day ends <span className="font-semibold" style={{ color: "var(--ink3)" }}>+{fmtMoney(paymentsSummary.income)}</span>
+              {renderPaymentsDateNav()}
+              Nothing due{paymentsDateIsToday ? " today" : ""} — day ends <span className="font-semibold" style={{ color: "var(--ink3)" }}>+{fmtMoney(paymentsSummary.income)}</span>
             </div>
           )}
         </div>
@@ -4564,7 +4679,7 @@ export default function HomePage() {
           <div className="flex items-start justify-between" style={{ padding: "24px 26px 0" }}>
             <div>
               <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[24px]">Payments due</div>
-              <div className="text-[13px] mt-0.5" style={{ color: "var(--muted)" }}>{format(new Date(), "EEEE, MMMM d")}</div>
+              <div className="text-[13px] mt-0.5" style={{ color: "var(--muted)" }}>{format(parseYmd(paymentsDate), "EEEE, MMMM d")}</div>
             </div>
             <button onClick={() => setPaymentsDrawerOpen(false)} className="p-1 text-[20px]" style={{ color: "var(--muted)" }}>✕</button>
           </div>
@@ -5322,7 +5437,7 @@ export default function HomePage() {
                 <input
                   type="text"
                   value={draftFinanceUrl}
-                  onChange={(e) => setDraftFinanceUrl(e.target.value)}
+                  onChange={(e) => { setDraftFinanceUrl(e.target.value); setFinanceTestResult(null); }}
                   placeholder="https://api.cashfold.com/v1/day/{date}"
                   className="w-full text-[13px] rounded-[10px] outline-none mb-1.5 font-mono"
                   style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
@@ -5335,7 +5450,7 @@ export default function HomePage() {
                 <input
                   type="text"
                   value={draftFinanceUserId}
-                  onChange={(e) => setDraftFinanceUserId(e.target.value)}
+                  onChange={(e) => { setDraftFinanceUserId(e.target.value); setFinanceTestResult(null); }}
                   placeholder="df29c04e-9afb-4267-bc55-69822cb80229"
                   className="w-full text-[13px] rounded-[10px] outline-none mb-1.5 font-mono"
                   style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
@@ -5348,7 +5463,7 @@ export default function HomePage() {
                 <input
                   type="password"
                   value={draftFinanceKey}
-                  onChange={(e) => setDraftFinanceKey(e.target.value)}
+                  onChange={(e) => { setDraftFinanceKey(e.target.value); setFinanceTestResult(null); }}
                   placeholder="Sent as the X-API-Key header"
                   className="w-full text-[13px] rounded-[10px] outline-none"
                   style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
@@ -5358,13 +5473,41 @@ export default function HomePage() {
                   <span className="text-[12px]" style={{ color: financeApiUrl ? "var(--accent)" : "var(--muted)" }}>
                     {financeApiUrl ? "Connected" : "Not connected"}
                   </span>
-                  {(draftFinanceUrl || draftFinanceKey || draftFinanceUserId) && (
-                    <button onClick={() => { setDraftFinanceUrl(""); setDraftFinanceKey(""); setDraftFinanceUserId(""); }}
-                      className="text-[12.5px] font-semibold" style={{ color: "var(--tag-fg)" }}>
-                      Disconnect
+                  <div className="flex items-center gap-3">
+                    <button
+                      onClick={() => void handleTestFinanceConnection()}
+                      disabled={financeTesting || !draftFinanceUrl.trim()}
+                      className="text-[12.5px] font-medium rounded-[9px] disabled:opacity-40"
+                      style={{ padding: "7px 14px", background: "var(--chip)", color: "var(--ink2)" }}
+                    >
+                      {financeTesting ? "Testing…" : "Test connection"}
                     </button>
-                  )}
+                    {(draftFinanceUrl || draftFinanceKey || draftFinanceUserId) && (
+                      <button onClick={() => { setDraftFinanceUrl(""); setDraftFinanceKey(""); setDraftFinanceUserId(""); setFinanceTestResult(null); }}
+                        className="text-[12.5px] font-semibold" style={{ color: "var(--tag-fg)" }}>
+                        Disconnect
+                      </button>
+                    )}
+                  </div>
                 </div>
+
+                {financeTestResult && (
+                  <p
+                    className="text-[12px] rounded-[10px] mt-3"
+                    style={{
+                      padding: "10px 12px",
+                      background: "var(--form-bg)",
+                      border: `1px solid ${financeTestResult.ok ? "var(--field-bd)" : "var(--tag-fg)"}`,
+                      color: financeTestResult.ok ? "var(--accent)" : "var(--tag-fg)",
+                    }}
+                  >
+                    {financeTestResult.message}
+                  </p>
+                )}
+
+                <p className="text-[11.5px] mt-3" style={{ color: "var(--muted)" }}>
+                  Test connection uses what&apos;s in the fields above, so you can check a key before saving it.
+                </p>
               </div>
               )}
               </div>
