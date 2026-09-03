@@ -8,7 +8,11 @@ import { type MetadataRoute } from "next";
 // falls back to a generated letter tile otherwise.
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "EisenQ — Decide & Do",
+    // ASCII only. The route is served as application/manifest+json with no
+    // charset, so a non-ASCII byte sequence here decodes as Windows-1252 in
+    // Safari ("EisenQ â€" Decide & Do"). Not worth risking in the one file
+    // iOS reads to choose a home screen icon.
+    name: "EisenQ - Decide & Do",
     short_name: "EisenQ",
     description: "The Prioritization Engine. Decide what truly matters.",
     start_url: "/dashboard",
