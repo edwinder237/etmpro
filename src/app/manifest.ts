@@ -22,12 +22,15 @@ export default function manifest(): MetadataRoute.Manifest {
     // a maskable entry, so every "any" icon here is opaque and full-bleed: an
     // alpha channel is composited to black, and a manifest whose only usable
     // icons are unusable sends iOS back to a generated letter tile.
+    // The -v2 filenames are deliberate. The previous revision replaced these
+    // icons in place, at URLs a CDN was already free to cache, so a stale
+    // transparent copy could be served indefinitely. New paths cannot be.
     icons: [
       { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png", purpose: "any" },
-      { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
-      { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
+      { src: "/icon-192-v2.png", sizes: "192x192", type: "image/png", purpose: "any" },
+      { src: "/icon-512-v2.png", sizes: "512x512", type: "image/png", purpose: "any" },
       // Android adaptive icons: the launcher applies its own shape mask.
-      { src: "/icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
+      { src: "/icon-512-maskable-v2.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
   };
 }
