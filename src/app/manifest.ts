@@ -18,11 +18,15 @@ export default function manifest(): MetadataRoute.Manifest {
     // --bg from the light palette, so the splash matches the paper ground.
     background_color: "#f1ecdc",
     theme_color: "#f1ecdc",
+    // iOS 16.4+ prefers manifest icons over apple-touch-icon, and it cannot use
+    // a maskable entry, so every "any" icon here is opaque and full-bleed: an
+    // alpha channel is composited to black, and a manifest whose only usable
+    // icons are unusable sends iOS back to a generated letter tile.
     icons: [
+      { src: "/apple-touch-icon.png", sizes: "180x180", type: "image/png", purpose: "any" },
       { src: "/icon-192.png", sizes: "192x192", type: "image/png", purpose: "any" },
       { src: "/icon-512.png", sizes: "512x512", type: "image/png", purpose: "any" },
-      // Full-bleed variant: launcher masks crop into solid colour rather than
-      // the transparent corners of the rounded-square art.
+      // Android adaptive icons: the launcher applies its own shape mask.
       { src: "/icon-512-maskable.png", sizes: "512x512", type: "image/png", purpose: "maskable" },
     ],
   };
