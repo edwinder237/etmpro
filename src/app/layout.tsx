@@ -8,8 +8,19 @@ import { Analytics } from "@vercel/analytics/react";
 export const metadata: Metadata = {
   title: "EisenQ - Decide & Do",
   description: "The Prioritization Engine. Decide what truly matters.",
+  // Declared explicitly rather than left to the app/apple-icon.png convention,
+  // which emits the href with a cache-busting query string. iOS Safari is
+  // unreliable about fetching an apple-touch-icon whose URL carries a query,
+  // and quietly falls back to a generated letter tile when it can't.
+  icons: {
+    icon: [
+      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/icon-192.png", sizes: "192x192", type: "image/png" },
+    ],
+    apple: [{ url: "/apple-touch-icon.png", sizes: "180x180", type: "image/png" }],
+  },
   // Lets iOS launch the home-screen shortcut without browser chrome and label
-  // it "EisenQ". The icon itself comes from app/apple-icon.png by convention.
+  // it "EisenQ".
   appleWebApp: {
     capable: true,
     title: "EisenQ",
