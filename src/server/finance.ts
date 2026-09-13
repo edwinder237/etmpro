@@ -1,5 +1,5 @@
 import { userSettingsCollection } from "~/server/db";
-import { decrypt } from "~/server/crypto";
+import { decrypt, describeKey } from "~/server/crypto";
 import { safeFetch } from "~/server/safe-fetch";
 import type { FinanceApiResponse } from "~/lib/payments";
 
@@ -84,13 +84,4 @@ export async function callFinanceApi(creds: FinanceCredentials, date: string): P
   }
 }
 
-/**
- * A masked fingerprint of a key: enough to tell two keys apart by eye without
- * printing the secret. This is what turns "invalid API key" into something
- * actionable — a wrong length or a shifted prefix is visible immediately.
- */
-export function describeKey(apiKey: string): string {
-  if (!apiKey) return "no key";
-  if (apiKey.length < 12) return `${apiKey.length} characters`;
-  return `${apiKey.length} characters, ${apiKey.slice(0, 6)}…${apiKey.slice(-4)}`;
-}
+export { describeKey };

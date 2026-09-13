@@ -260,6 +260,35 @@ export async function PUT(request: NextRequest) {
       return NextResponse.json({ error: "Invalid task ID format" }, { status: 400 });
     }
 
+    // A checklist only gates completion if its template opted in. Enforced here
+    // rather than in the client: a gate the browser alone applies is decorative.
+    // Un-completing is never blocked, or a gated task completed by some other
+    // path would be stuck completed forever.
+    if (restUpdateData.status === "completed") {
+      const existing = await tasksCollection.findOne({ _id: new ObjectId(_id), userId });
+      let remaining = 0;
+      let blockingName = "";
+      for (const checklist of existing?.checklists ?? []) {
+        if (!checklist.blockCompletion) continue;
+        const left = checklist.steps.filter((step) => !step.done).length;
+        if (left > 0) {
+          if (remaining === 0) blockingName = checklist.name;
+          remaining += left;
+        }
+      }
+      if (remaining > 0) {
+        return NextResponse.json(
+          {
+            error: `${remaining} step${remaining === 1 ? "" : "s"} left on ${blockingName}`,
+            checklistBlocked: true,
+            remaining,
+            checklistName: blockingName,
+          },
+          { status: 400 }
+        );
+      }
+    }
+
     // Build the update operation with only allowed fields
     const updateOperation: { $set: Record<string, unknown>; $unset?: Record<string, "" | true | 1> } = {
       $set: {
