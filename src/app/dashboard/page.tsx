@@ -91,6 +91,36 @@ interface Task {
   completedAt?: string;
   subtaskCount?: number;
   subtaskCompletedCount?: number;
+  checklists?: TaskChecklist[];
+}
+
+// A reusable checklist copied onto a task. Distinct from ChecklistItem below,
+// which is the daily/weekly routine habit — same word, unrelated feature.
+interface TaskChecklistStep {
+  id: string;
+  text: string;
+  order: number;
+  done: boolean;
+  doneAt?: string;
+}
+
+interface TaskChecklist {
+  id: string;
+  sourceId: string | null;
+  name: string;
+  blockCompletion: boolean;
+  order: number;
+  steps: TaskChecklistStep[];
+}
+
+// A row in the Myndlist library (the reusable original, not an attached copy).
+interface MyndlistTemplate {
+  id: string;
+  name: string;
+  steps: { id: string; text: string }[];
+  stepCount: number;
+  usageCount: number;
+  blockCompletion: boolean;
 }
 
 type GoalPeriodType = "week" | "month" | "year" | "custom";
@@ -363,6 +393,45 @@ export default function HomePage() {
   const [draftFinanceUserId, setDraftFinanceUserId] = useState("");
   const [financeTesting, setFinanceTesting] = useState(false);
   const [financeTestResult, setFinanceTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+  // Myndlist: the reusable-checklist library lives in a separate app the user owns.
+  const [myndlistApiUrl, setMyndlistApiUrl] = useState("");
+  const [myndlistApiKey, setMyndlistApiKey] = useState("");
+  const [draftMyndlistUrl, setDraftMyndlistUrl] = useState("");
+  const [draftMyndlistKey, setDraftMyndlistKey] = useState("");
+  const [myndlistTesting, setMyndlistTesting] = useState(false);
+  const [myndlistTestResult, setMyndlistTestResult] = useState<{ ok: boolean; message: string } | null>(null);
+
+  // ===== Checklist library (Myndlist) and attached instances =====
+  // Instances live on the Task document, so `tasks` and `editingTask` are the
+  // only stores for them — there is no separate instance cache to drift.
+  const [myndlistDrawerOpen, setMyndlistDrawerOpen] = useState(false);
+  const [myndlistTemplates, setMyndlistTemplates] = useState<MyndlistTemplate[]>([]);
+  const [myndlistConfigured, setMyndlistConfigured] = useState(true);
+  const [myndlistLoading, setMyndlistLoading] = useState(false);
+  const [myndlistError, setMyndlistError] = useState("");
+  const [myndlistFetchedAt, setMyndlistFetchedAt] = useState(0);
+  const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
+  const [templateDraft, setTemplateDraft] = useState<{ name: string; blockCompletion: boolean; steps: { id: string; text: string }[] } | null>(null);
+  const [templateSaving, setTemplateSaving] = useState(false);
+  const [newTemplateStep, setNewTemplateStep] = useState("");
+
+  const [expandedTaskChecklistIds, setExpandedTaskChecklistIds] = useState<Set<string>>(new Set());
+  const [attachPickerOpen, setAttachPickerOpen] = useState(false);
+  const [attachSearch, setAttachSearch] = useState("");
+  const [attachBusyId, setAttachBusyId] = useState<string | null>(null);
+  const [newChecklistStep, setNewChecklistStep] = useState<Record<string, string>>({});
+  const [gateHintTaskId, setGateHintTaskId] = useState<string | null>(null);
+
+  // Ticking a step is optimistic and the write is coalesced per checklist.
+  // Refs, not state: a state-held timer id is stale inside the timeout closure,
+  // and re-rendering this component on every tick is the dominant cost.
+  const stepFlushTimers = useRef<Map<string, ReturnType<typeof setTimeout>>>(new Map());
+  const pendingStepOps = useRef<Map<string, {
+    taskId: string;
+    checklistId: string;
+    steps: Map<string, boolean>;
+    snapshot: TaskChecklistStep[];
+  }>>(new Map());
   const [archivedTasks, setArchivedTasks] = useState<Task[]>([]);
   const [settingsKeyInput, setSettingsKeyInput] = useState("");
   const [icalUrls, setIcalUrls] = useState<string[]>([]);
@@ -738,7 +807,7 @@ export default function HomePage() {
       try {
         const res = await fetch("/api/settings");
         if (!res.ok) return;
-        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string; financeUserId?: string };
+        const data = (await res.json()) as { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string; financeUserId?: string; myndlistApiUrl?: string; myndlistApiKey?: string };
         if (typeof data.geminiApiKey === "string") {
           setGeminiApiKey(data.geminiApiKey);
           if (data.geminiApiKey) safeSetItem("eisenq-gemini-api-key", data.geminiApiKey);
@@ -756,6 +825,14 @@ export default function HomePage() {
           setFinanceApiKey(data.financeApiKey);
           setDraftFinanceKey(data.financeApiKey);
         }
+        if (typeof data.myndlistApiUrl === "string") {
+          setMyndlistApiUrl(data.myndlistApiUrl);
+          setDraftMyndlistUrl(data.myndlistApiUrl);
+        }
+        if (typeof data.myndlistApiKey === "string") {
+          setMyndlistApiKey(data.myndlistApiKey);
+          setDraftMyndlistKey(data.myndlistApiKey);
+        }
         if (typeof data.financeUserId === "string") {
           setFinanceUserId(data.financeUserId);
           setDraftFinanceUserId(data.financeUserId);
@@ -770,7 +847,7 @@ export default function HomePage() {
 
   // Persist settings to the encrypted DB. localStorage cache is updated by callers
   // for instant reads; this fire-and-forget call keeps the server in sync.
-  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string; financeUserId?: string }) => {
+  const persistSettings = useCallback((partial: { geminiApiKey?: string; icalUrls?: string[]; autoArchiveCompleted?: boolean; financeApiUrl?: string; financeApiKey?: string; financeUserId?: string; myndlistApiUrl?: string; myndlistApiKey?: string }) => {
     void fetch("/api/settings", {
       method: "PUT",
       headers: { "Content-Type": "application/json" },
@@ -806,6 +883,32 @@ export default function HomePage() {
     }
   }, [draftFinanceUrl, draftFinanceKey, draftFinanceUserId]);
 
+  // Runs one real request against whatever is typed in the Myndlist fields,
+  // so a key can be checked before saving it.
+  const handleTestMyndlistConnection = useCallback(async () => {
+    setMyndlistTesting(true);
+    setMyndlistTestResult(null);
+    try {
+      const res = await fetch("/api/myndlist/test", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          myndlistApiUrl: draftMyndlistUrl.trim(),
+          myndlistApiKey: draftMyndlistKey.trim(),
+        }),
+      });
+      const data = (await res.json()) as { ok?: boolean; message?: string; error?: string };
+      setMyndlistTestResult({
+        ok: data.ok === true,
+        message: data.message ?? data.error ?? "The test could not be run.",
+      });
+    } catch {
+      setMyndlistTestResult({ ok: false, message: "The test could not be run. Check your connection." });
+    } finally {
+      setMyndlistTesting(false);
+    }
+  }, [draftMyndlistUrl, draftMyndlistKey]);
+
   // Whether the Settings drafts differ from the applied values
   const settingsDirty =
     locationInput.trim() !== weatherLocation ||
@@ -815,6 +918,8 @@ export default function HomePage() {
     draftAutoArchive !== autoArchiveCompleted ||
     draftFinanceUrl.trim() !== financeApiUrl ||
     draftFinanceKey.trim() !== financeApiKey ||
+    draftMyndlistUrl.trim() !== myndlistApiUrl ||
+    draftMyndlistKey.trim() !== myndlistApiKey ||
     draftFinanceUserId.trim() !== financeUserId;
 
   // Apply all staged Settings drafts at once
@@ -859,6 +964,16 @@ export default function HomePage() {
       persistSettings({ financeApiUrl: fUrl, financeApiKey: fKey, financeUserId: fUid });
       // The day-ends strip is driven by this endpoint, so refresh it once saved.
       setTimeout(() => void fetchPaymentsDue(paymentsDate), 400);
+    }
+    const mUrl = draftMyndlistUrl.trim();
+    const mKey = draftMyndlistKey.trim();
+    if (mUrl !== myndlistApiUrl || mKey !== myndlistApiKey) {
+      setMyndlistApiUrl(mUrl);
+      setMyndlistApiKey(mKey);
+      persistSettings({ myndlistApiUrl: mUrl, myndlistApiKey: mKey });
+      // The library is fetched lazily, so just drop the cache; the next open refetches.
+      setMyndlistTemplates([]);
+      setMyndlistFetchedAt(0);
     }
     setSettingsIcalInput("");
     setSettingsIcalError("");
@@ -2978,7 +3093,7 @@ export default function HomePage() {
               }} title="Toggle theme">
                 {isDarkMode ? <Sun className="w-[17px] h-[17px]" /> : <Moon className="w-[17px] h-[17px]" />}
               </button>
-              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setDraftFinanceUrl(financeApiUrl); setDraftFinanceKey(financeApiKey); setDraftFinanceUserId(financeUserId); setFinanceTestResult(null); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
+              <button className="navbtn" onClick={() => { setSettingsKeyInput(geminiApiKey); setLocationInput(weatherLocation); setDraftIcalUrls(icalUrls); setSettingsIcalInput(""); setSettingsIcalError(""); setDraftAutoArchive(autoArchiveCompleted); setDraftFinanceUrl(financeApiUrl); setDraftFinanceKey(financeApiKey); setDraftFinanceUserId(financeUserId); setFinanceTestResult(null); setDraftMyndlistUrl(myndlistApiUrl); setDraftMyndlistKey(myndlistApiKey); setMyndlistTestResult(null); setSettingsSection("tasks"); void fetchArchivedTasks(); setIsSettingsOpen(true); }} title="Settings">
                 <Settings className="w-[17px] h-[17px]" />
               </button>
               <UserButton
@@ -5508,6 +5623,75 @@ export default function HomePage() {
                 <p className="text-[11.5px] mt-3" style={{ color: "var(--muted)" }}>
                   Test connection uses what&apos;s in the fields above, so you can check a key before saving it.
                 </p>
+
+                <div className="mt-6 pt-6" style={{ borderTop: "1px solid var(--line2)" }}>
+                  <label className="block text-[13px] font-semibold mb-1.5" style={{ color: "var(--ink2)" }}>Myndlist checklists</label>
+                  <p className="text-[12px] mb-3" style={{ color: "var(--muted)" }}>
+                    Connect Myndlist to reuse its checklists here. Attaching one to a task copies its steps in fresh, so ticking them never changes the original.
+                  </p>
+
+                  <label className="block text-[12px] mb-1.5" style={{ color: "var(--ink3)" }}>Myndlist URL</label>
+                  <input
+                    type="text"
+                    value={draftMyndlistUrl}
+                    onChange={(e) => { setDraftMyndlistUrl(e.target.value); setMyndlistTestResult(null); }}
+                    placeholder="https://your-myndlist.vercel.app"
+                    className="w-full text-[13px] rounded-[10px] outline-none mb-1.5 font-mono"
+                    style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
+                  />
+                  <p className="text-[11.5px] mb-4" style={{ color: "var(--muted)" }}>
+                    The site address. <code>/api/v1</code> is added for you. A Myndlist on localhost can&apos;t be reached from here.
+                  </p>
+
+                  <label className="block text-[12px] mb-1.5" style={{ color: "var(--ink3)" }}>API key</label>
+                  <input
+                    type="password"
+                    value={draftMyndlistKey}
+                    onChange={(e) => { setDraftMyndlistKey(e.target.value); setMyndlistTestResult(null); }}
+                    placeholder="mynd_…"
+                    className="w-full text-[13px] rounded-[10px] outline-none"
+                    style={{ padding: "10px 14px", background: "var(--field)", border: "1px solid var(--field-bd)", color: "var(--ink)" }}
+                  />
+                  <p className="text-[11.5px] mt-1.5" style={{ color: "var(--muted)" }}>
+                    Create one in Myndlist under <strong>API keys</strong>. It is shown only once.
+                  </p>
+
+                  <div className="flex items-center justify-between gap-3 mt-3">
+                    <span className="text-[12px]" style={{ color: myndlistApiUrl ? "var(--accent)" : "var(--muted)" }}>
+                      {myndlistApiUrl ? "Connected" : "Not connected"}
+                    </span>
+                    <div className="flex items-center gap-3">
+                      <button
+                        onClick={() => void handleTestMyndlistConnection()}
+                        disabled={myndlistTesting || !draftMyndlistUrl.trim()}
+                        className="text-[12.5px] font-medium rounded-[9px] disabled:opacity-40"
+                        style={{ padding: "7px 14px", background: "var(--chip)", color: "var(--ink2)" }}
+                      >
+                        {myndlistTesting ? "Testing…" : "Test connection"}
+                      </button>
+                      {(draftMyndlistUrl || draftMyndlistKey) && (
+                        <button onClick={() => { setDraftMyndlistUrl(""); setDraftMyndlistKey(""); setMyndlistTestResult(null); }}
+                          className="text-[12.5px] font-semibold" style={{ color: "var(--tag-fg)" }}>
+                          Disconnect
+                        </button>
+                      )}
+                    </div>
+                  </div>
+
+                  {myndlistTestResult && (
+                    <p
+                      className="text-[12px] rounded-[10px] mt-3"
+                      style={{
+                        padding: "10px 12px",
+                        background: "var(--form-bg)",
+                        border: `1px solid ${myndlistTestResult.ok ? "var(--field-bd)" : "var(--tag-fg)"}`,
+                        color: myndlistTestResult.ok ? "var(--accent)" : "var(--tag-fg)",
+                      }}
+                    >
+                      {myndlistTestResult.message}
+                    </p>
+                  )}
+                </div>
               </div>
               )}
               </div>

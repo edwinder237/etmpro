@@ -11,6 +11,8 @@ const updateSettingsSchema = z.object({
   financeApiUrl: z.string().max(500).optional(),
   financeApiKey: z.string().max(200).optional(),
   financeUserId: z.string().max(200).optional(),
+  myndlistApiUrl: z.string().max(500).optional(),
+  myndlistApiKey: z.string().max(200).optional(),
 });
 
 export async function GET() {
@@ -27,6 +29,8 @@ export async function GET() {
     let financeApiUrl = "";
     let financeApiKey = "";
     let financeUserId = "";
+    let myndlistApiUrl = "";
+    let myndlistApiKey = "";
 
     if (doc?.geminiApiKeyEnc) {
       try { geminiApiKey = decrypt(doc.geminiApiKeyEnc); } catch { /* corrupt/rotated key */ }
@@ -43,9 +47,15 @@ export async function GET() {
     if (doc?.financeUserIdEnc) {
       try { financeUserId = decrypt(doc.financeUserIdEnc); } catch { /* corrupt/rotated key */ }
     }
+    if (doc?.myndlistApiUrlEnc) {
+      try { myndlistApiUrl = decrypt(doc.myndlistApiUrlEnc); } catch { /* corrupt/rotated key */ }
+    }
+    if (doc?.myndlistApiKeyEnc) {
+      try { myndlistApiKey = decrypt(doc.myndlistApiKeyEnc); } catch { /* corrupt/rotated key */ }
+    }
 
     return NextResponse.json(
-      { geminiApiKey, icalUrls, autoArchiveCompleted: doc?.autoArchiveCompleted ?? false, financeApiUrl, financeApiKey, financeUserId },
+      { geminiApiKey, icalUrls, autoArchiveCompleted: doc?.autoArchiveCompleted ?? false, financeApiUrl, financeApiKey, financeUserId, myndlistApiUrl, myndlistApiKey },
       { headers: { "Cache-Control": "no-store" } }
     );
   } catch {
@@ -69,7 +79,7 @@ export async function PUT(request: NextRequest) {
       );
     }
 
-    const { geminiApiKey, icalUrls, autoArchiveCompleted, financeApiUrl, financeApiKey, financeUserId } = parsed.data;
+    const { geminiApiKey, icalUrls, autoArchiveCompleted, financeApiUrl, financeApiKey, financeUserId, myndlistApiUrl, myndlistApiKey } = parsed.data;
 
     const set: Record<string, unknown> = { updatedAt: new Date() };
     const unset: Record<string, ""> = {};
@@ -96,6 +106,14 @@ export async function PUT(request: NextRequest) {
     if (financeUserId !== undefined) {
       if (financeUserId.trim()) set.financeUserIdEnc = encrypt(financeUserId.trim());
       else unset.financeUserIdEnc = "";
+    }
+    if (myndlistApiUrl !== undefined) {
+      if (myndlistApiUrl.trim()) set.myndlistApiUrlEnc = encrypt(myndlistApiUrl.trim());
+      else unset.myndlistApiUrlEnc = "";
+    }
+    if (myndlistApiKey !== undefined) {
+      if (myndlistApiKey.trim()) set.myndlistApiKeyEnc = encrypt(myndlistApiKey.trim());
+      else unset.myndlistApiKeyEnc = "";
     }
 
     const update: Record<string, unknown> = {
