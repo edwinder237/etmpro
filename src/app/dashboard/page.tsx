@@ -2,6 +2,7 @@
 
 import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
 import {
+  ListChecks,
   Search,
   Sun,
   Moon,
@@ -909,6 +910,125 @@ export default function HomePage() {
     }
   }, [draftMyndlistUrl, draftMyndlistKey]);
 
+  // ===== Checklist library =====
+  // Fetched lazily, never on mount: a user who has not connected Myndlist should
+  // not see a failed request just for loading the dashboard.
+  const fetchMyndlistTemplates = useCallback(async (force = false) => {
+    if (!force && myndlistFetchedAt && Date.now() - myndlistFetchedAt < 60_000) return;
+    setMyndlistLoading(true);
+    setMyndlistError("");
+    try {
+      const res = await fetch("/api/myndlist/checklists");
+      const data = (await res.json()) as { configured?: boolean; templates?: MyndlistTemplate[]; error?: string };
+      if (!res.ok) {
+        setMyndlistError(data.error ?? "Couldn't load your checklists.");
+        return;
+      }
+      setMyndlistConfigured(data.configured !== false);
+      setMyndlistTemplates(data.templates ?? []);
+      setMyndlistFetchedAt(Date.now());
+    } catch {
+      setMyndlistError("Couldn't reach the checklist library.");
+    } finally {
+      setMyndlistLoading(false);
+    }
+  }, [myndlistFetchedAt]);
+
+  const openChecklistLibrary = useCallback((templateId?: string) => {
+    setMyndlistDrawerOpen(true);
+    setExpandedTemplateId(templateId ?? null);
+    setTemplateDraft(null);
+    void fetchMyndlistTemplates();
+  }, [fetchMyndlistTemplates]);
+
+  const closeChecklistLibrary = useCallback(() => {
+    setMyndlistDrawerOpen(false);
+    setExpandedTemplateId(null);
+    setTemplateDraft(null);
+    setNewTemplateStep("");
+  }, []);
+
+  const startEditTemplate = (template: MyndlistTemplate) => {
+    setExpandedTemplateId(template.id);
+    setTemplateDraft({
+      name: template.name,
+      blockCompletion: template.blockCompletion,
+      steps: template.steps.map((s) => ({ ...s })),
+    });
+    setNewTemplateStep("");
+  };
+
+  const handleCreateTemplate = async (name: string, steps: string[] = []) => {
+    setTemplateSaving(true);
+    try {
+      const res = await fetch("/api/myndlist/checklists", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name, steps }),
+      });
+      const data = (await res.json()) as { template?: MyndlistTemplate; error?: string };
+      if (!res.ok || !data.template) {
+        toast.error(data.error ?? "Couldn't create the checklist");
+        return null;
+      }
+      setMyndlistTemplates((prev) => [data.template!, ...prev]);
+      return data.template;
+    } catch {
+      toast.error("Couldn't create the checklist");
+      return null;
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleSaveTemplate = async (templateId: string) => {
+    if (!templateDraft) return;
+    setTemplateSaving(true);
+    try {
+      const res = await fetch(`/api/myndlist/checklists/${templateId}`, {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          name: templateDraft.name.trim() || "Untitled checklist",
+          steps: templateDraft.steps.filter((s) => s.text.trim()).map((s) => ({ text: s.text })),
+          blockCompletion: templateDraft.blockCompletion,
+        }),
+      });
+      const data = (await res.json()) as { template?: MyndlistTemplate; error?: string };
+      if (!res.ok || !data.template) {
+        toast.error(data.error ?? "Couldn't save the checklist");
+        return;
+      }
+      const saved = data.template;
+      setMyndlistTemplates((prev) => prev.map((t) => (t.id === templateId ? { ...saved, usageCount: t.usageCount } : t)));
+      setExpandedTemplateId(null);
+      setTemplateDraft(null);
+    } catch {
+      toast.error("Couldn't save the checklist");
+    } finally {
+      setTemplateSaving(false);
+    }
+  };
+
+  const handleDeleteTemplate = async (templateId: string) => {
+    try {
+      const res = await fetch(`/api/myndlist/checklists/${templateId}`, { method: "DELETE" });
+      if (!res.ok) {
+        const data = (await res.json()) as { error?: string };
+        toast.error(data.error ?? "Couldn't delete the checklist");
+        return;
+      }
+      setMyndlistTemplates((prev) => prev.filter((t) => t.id !== templateId));
+      setExpandedTemplateId(null);
+      setTemplateDraft(null);
+      // Copies already attached to tasks survive on purpose; they just lose the
+      // link back. Reload so their menus reflect that.
+      void fetchTasks();
+    } catch {
+      toast.error("Couldn't delete the checklist");
+    }
+  };
+
   // Whether the Settings drafts differ from the applied values
   const settingsDirty =
     locationInput.trim() !== weatherLocation ||
@@ -1001,7 +1121,7 @@ export default function HomePage() {
 
   // Lock body scroll when any modal/drawer is open
   useEffect(() => {
-    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || routineDrawerOpen || isGoalsExpanded || paymentsDrawerOpen;
+    const isAnyModalOpen = isModalOpen || isInfoModalOpen || isCalendarDrawerOpen || isCalendarTaskModalOpen || routineDrawerOpen || isGoalsExpanded || paymentsDrawerOpen || myndlistDrawerOpen;
 
     if (isAnyModalOpen) {
       document.body.style.overflow = 'hidden';
@@ -1012,7 +1132,7 @@ export default function HomePage() {
     return () => {
       document.body.style.overflow = '';
     };
-  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, routineDrawerOpen, isGoalsExpanded, paymentsDrawerOpen]);
+  }, [isModalOpen, isInfoModalOpen, isCalendarDrawerOpen, isCalendarTaskModalOpen, routineDrawerOpen, isGoalsExpanded, paymentsDrawerOpen, myndlistDrawerOpen]);
 
   const fetchTasks = async () => {
     try {
@@ -2665,10 +2785,17 @@ export default function HomePage() {
     }
   };
 
-  const filteredTasks = tasks.filter(task => 
-    task.title.toLowerCase().includes(searchQuery.toLowerCase()) ||
-    task.description?.toLowerCase().includes(searchQuery.toLowerCase())
-  );
+  // searchQuery is shared with the command palette, so a task also matches on the
+  // name of a checklist attached to it — otherwise searching a checklist name in
+  // the palette blanks the matrix behind it.
+  const filteredTasks = tasks.filter(task => {
+    const q = searchQuery.toLowerCase();
+    return (
+      task.title.toLowerCase().includes(q) ||
+      (task.description?.toLowerCase().includes(q) ?? false) ||
+      (task.checklists ?? []).some(c => c.name.toLowerCase().includes(q))
+    );
+  });
 
   const getTasksByQuadrant = (quadrant: TaskQuadrant) =>
     filteredTasks.filter(task => task.quadrant === quadrant);
@@ -3059,7 +3186,7 @@ export default function HomePage() {
           </div>
           <div className="flex items-center gap-3 flex-1 md:flex-none justify-end">
             <button
-              onClick={() => setSearchOpen(true)}
+              onClick={() => { setSearchOpen(true); void fetchMyndlistTemplates(); }}
               className="searchbar flex items-center gap-2 flex-1 md:flex-none md:w-[280px] px-4 py-[9px] rounded-[11px] text-left cursor-text"
               style={{ background: "var(--drawer)", border: "1px solid var(--field-bd)" }}
             >
@@ -3081,6 +3208,9 @@ export default function HomePage() {
             <div className="flex gap-1">
               <button className="navbtn" onClick={() => setIsCalendarDrawerOpen(true)} title="Today's calendar">
                 <CalendarDays className="w-[17px] h-[17px]" />
+              </button>
+              <button className="navbtn" onClick={() => openChecklistLibrary()} title="Checklist library">
+                <ListChecks className="w-[17px] h-[17px]" />
               </button>
               <button className="navbtn" onClick={() => setIsInfoModalOpen(true)} title="About the matrix"
                 style={{ fontFamily: "var(--font-serif)", fontStyle: "italic", fontSize: "18px" }}>
@@ -4411,9 +4541,9 @@ export default function HomePage() {
       </div>
 
       {/* ===== Calm Editorial drawers ===== */}
-      {(routineDrawerOpen || isGoalsExpanded || paymentsDrawerOpen) && (
+      {(routineDrawerOpen || isGoalsExpanded || paymentsDrawerOpen || myndlistDrawerOpen) && (
         <div
-          onClick={() => { setRoutineDrawerOpen(false); setIsGoalsExpanded(false); setPaymentsDrawerOpen(false); resetGoalForm(); }}
+          onClick={() => { setRoutineDrawerOpen(false); setIsGoalsExpanded(false); setPaymentsDrawerOpen(false); resetGoalForm(); closeChecklistLibrary(); }}
           className="fixed inset-0 z-[60]"
           style={{ background: "var(--overlay)", animation: "fadeIn .2s ease" }}
         />
@@ -4838,6 +4968,169 @@ export default function HomePage() {
           </div>
         </div>
       )}
+      {/* Checklist library drawer — reusable procedures, authored in Myndlist */}
+      {myndlistDrawerOpen && (
+        <div className="fixed top-0 right-0 bottom-0 z-[61] w-[470px] max-w-[94vw] overflow-y-auto"
+          style={{ background: "var(--drawer)", borderLeft: "1px solid var(--drawer-bd)", boxShadow: "-24px 0 60px -30px rgba(70,55,30,0.4)", animation: "drawerIn .28s cubic-bezier(.16,1,.3,1)" }}>
+          <div className="flex items-start justify-between" style={{ padding: "24px 26px 0" }}>
+            <div>
+              <div style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }} className="text-[24px]">Checklists</div>
+              <div className="text-[13px] mt-0.5 leading-[1.5]" style={{ color: "var(--muted)" }}>
+                Procedures you run more than once. Attach one to a task and it copies in fresh.
+              </div>
+            </div>
+            <button onClick={closeChecklistLibrary} className="p-1 text-[20px]" style={{ color: "var(--muted)" }}>✕</button>
+          </div>
+
+          <div style={{ padding: "20px 22px 0" }} className="flex flex-col gap-2">
+            {!myndlistConfigured ? (
+              <div className="rounded-[13px] text-[13px] leading-[1.55]" style={{ padding: "16px", background: "var(--form-bg)", border: "1px solid var(--form-bd)", color: "var(--muted)" }}>
+                Connect Myndlist in <button onClick={() => { closeChecklistLibrary(); setSettingsSection("integrations"); setDraftMyndlistUrl(myndlistApiUrl); setDraftMyndlistKey(myndlistApiKey); setMyndlistTestResult(null); setIsSettingsOpen(true); }} className="font-semibold" style={{ color: "var(--accent)" }}>Settings → Integrations</button> to reuse its checklists here.
+              </div>
+            ) : myndlistLoading && myndlistTemplates.length === 0 ? (
+              <>
+                {[0, 1, 2].map((i) => <div key={i} className="skel h-[62px] rounded-[13px]" />)}
+              </>
+            ) : myndlistError ? (
+              <div className="rounded-[13px] text-[13px]" style={{ padding: "14px 16px", background: "var(--form-bg)", border: "1px solid var(--tag-fg)", color: "var(--tag-fg)" }}>
+                {myndlistError}
+                <button onClick={() => void fetchMyndlistTemplates(true)} className="ml-2 font-semibold underline">Retry</button>
+              </div>
+            ) : myndlistTemplates.length === 0 ? (
+              <div className="rounded-[13px] text-[13px] leading-[1.55]" style={{ padding: "16px", background: "var(--form-bg)", border: "1px solid var(--form-bd)", color: "var(--muted)" }}>
+                No checklists yet. Create one below — a packing list, a client handoff, anything you do the same way twice.
+              </div>
+            ) : (
+              myndlistTemplates.map((template) => {
+                const isEditing = expandedTemplateId === template.id && templateDraft !== null;
+                if (!isEditing) {
+                  return (
+                    <div key={template.id} onClick={() => startEditTemplate(template)}
+                      className="hovrow flex items-center gap-3 rounded-[13px] cursor-pointer"
+                      style={{ padding: "14px 16px", background: "var(--field)", border: "1px solid var(--field-bd)" }}>
+                      <div className="flex-1 min-w-0">
+                        <div className="text-[14px] truncate" style={{ color: "var(--ink)" }}>{template.name}</div>
+                        <div className="text-[11.5px] mt-0.5" style={{ color: "var(--muted)" }}>
+                          {template.stepCount} step{template.stepCount === 1 ? "" : "s"} · used {template.usageCount}×
+                        </div>
+                      </div>
+                      <span className="text-[13px]" style={{ color: "var(--muted2)" }}>✎</span>
+                    </div>
+                  );
+                }
+                return (
+                  <div key={template.id} className="rounded-[13px] overflow-hidden"
+                    style={{ background: "var(--field)", border: "1px solid var(--accent)" }}>
+                    <div className="flex items-center gap-3" style={{ padding: "14px 16px" }}>
+                      <input
+                        value={templateDraft.name}
+                        onChange={(e) => setTemplateDraft({ ...templateDraft, name: e.target.value })}
+                        className="flex-1 bg-transparent outline-none text-[18px]"
+                        style={{ fontFamily: "var(--font-serif)", color: "var(--ink)" }}
+                      />
+                      <span className="text-[11.5px] shrink-0" style={{ color: "var(--muted)" }}>used {template.usageCount}×</span>
+                    </div>
+
+                    <div style={{ padding: "0 16px" }} className="flex flex-col">
+                      {templateDraft.steps.map((step, i) => (
+                        <div key={step.id} className="hovrow flex items-center gap-2.5 rounded-[8px]" style={{ padding: "8px", margin: "0 -8px" }}>
+                          <span className="text-[11px] w-[15px] text-right shrink-0" style={{ color: "var(--num)" }}>{i + 1}</span>
+                          <input
+                            value={step.text}
+                            onChange={(e) => setTemplateDraft({
+                              ...templateDraft,
+                              steps: templateDraft.steps.map((x) => (x.id === step.id ? { ...x, text: e.target.value } : x)),
+                            })}
+                            className="flex-1 bg-transparent outline-none text-[13.5px]"
+                            style={{ color: "var(--ink2)" }}
+                          />
+                          <button
+                            onClick={() => setTemplateDraft({ ...templateDraft, steps: templateDraft.steps.filter((x) => x.id !== step.id) })}
+                            className="shrink-0 p-0.5 rounded" style={{ color: "var(--muted2)" }} title="Remove step">
+                            <Trash2 className="w-[13px] h-[13px]" />
+                          </button>
+                        </div>
+                      ))}
+                    </div>
+
+                    <div style={{ padding: "12px 16px 0" }}>
+                      <input
+                        value={newTemplateStep}
+                        onChange={(e) => setNewTemplateStep(e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && newTemplateStep.trim()) {
+                            e.preventDefault();
+                            setTemplateDraft({
+                              ...templateDraft,
+                              steps: [...templateDraft.steps, { id: `new-${Date.now()}`, text: newTemplateStep.trim() }],
+                            });
+                            setNewTemplateStep("");
+                          }
+                        }}
+                        placeholder="Add a step…"
+                        className="w-full text-[13px] rounded-[10px] outline-none placeholder:text-[color:var(--muted3)]"
+                        style={{ padding: "10px 13px", background: "var(--form-bg)", border: "1px solid var(--form-bd)", color: "var(--ink)" }}
+                      />
+                    </div>
+
+                    <div className="flex items-start gap-2.5 rounded-[11px]" style={{ margin: "14px 16px 0", padding: "12px 14px", background: "var(--tint)" }}>
+                      <button
+                        onClick={() => setTemplateDraft({ ...templateDraft, blockCompletion: !templateDraft.blockCompletion })}
+                        className="relative shrink-0 rounded-full"
+                        style={{ width: 32, height: 18, background: templateDraft.blockCompletion ? "var(--pill-active)" : "var(--line)" }}
+                        role="switch" aria-checked={templateDraft.blockCompletion}>
+                        <span className="absolute rounded-full" style={{ top: 2, left: templateDraft.blockCompletion ? 16 : 2, width: 14, height: 14, background: "var(--drawer)", transition: "left .15s ease" }} />
+                      </button>
+                      <div>
+                        <div className="text-[12.5px]" style={{ color: "var(--ink2)" }}>Block the task until every step is ticked</div>
+                        <div className="text-[11.5px] mt-0.5" style={{ color: "var(--muted)" }}>Off by default — steps are a memory aid, not a gate.</div>
+                      </div>
+                    </div>
+
+                    <p className="text-[11.5px]" style={{ padding: "12px 16px 0", color: "var(--muted)" }}>
+                      Changes apply to checklists you attach from now on. Copies already on a task stay as they were.
+                    </p>
+
+                    <div className="flex items-center justify-between" style={{ padding: "16px" }}>
+                      <button onClick={() => void handleDeleteTemplate(template.id)}
+                        className="text-[12.5px] font-semibold" style={{ color: "#dc2626" }}>
+                        Delete checklist
+                      </button>
+                      <div className="flex items-center gap-2">
+                        <button onClick={() => { setExpandedTemplateId(null); setTemplateDraft(null); }}
+                          className="text-[12.5px] font-medium rounded-[10px]" style={{ padding: "9px 16px", background: "var(--chip)", color: "var(--ink2)" }}>
+                          Cancel
+                        </button>
+                        <button onClick={() => void handleSaveTemplate(template.id)} disabled={templateSaving}
+                          className="cta text-[12.5px] font-semibold rounded-[10px] disabled:opacity-50"
+                          style={{ padding: "9px 20px", background: "var(--btn-primary)", color: "var(--btn-fg)" }}>
+                          {templateSaving ? "Saving…" : "Done"}
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          {myndlistConfigured && (
+            <div style={{ padding: "16px 22px 26px" }}>
+              <button
+                onClick={async () => {
+                  const created = await handleCreateTemplate("Untitled checklist");
+                  if (created) startEditTemplate(created);
+                }}
+                disabled={templateSaving}
+                className="hovrow w-full text-[13px] rounded-[11px] disabled:opacity-50"
+                style={{ padding: "11px", textAlign: "center", border: "1px dashed var(--check-bd)", color: "var(--muted5)" }}>
+                + New checklist
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Search command palette */}
       {searchOpen && (
         <>
@@ -4865,10 +5158,11 @@ export default function HomePage() {
                   ? tasks.filter(t => t.title.toLowerCase().includes(q) || t.description?.toLowerCase().includes(q))
                   : [];
                 const matchRoutine = q ? checklistItems.filter(i => i.title.toLowerCase().includes(q)) : [];
+                const matchTemplates = q ? myndlistTemplates.filter(t => t.name.toLowerCase().includes(q)) : [];
                 if (!q) {
-                  return <div className="px-4 py-6 text-[13px] text-center" style={{ color: "var(--muted)" }}>Start typing to find a task or routine item.</div>;
+                  return <div className="px-4 py-6 text-[13px] text-center" style={{ color: "var(--muted)" }}>Start typing to find a task, routine item or checklist.</div>;
                 }
-                if (matchTasks.length === 0 && matchRoutine.length === 0) {
+                if (matchTasks.length === 0 && matchRoutine.length === 0 && matchTemplates.length === 0) {
                   return <div className="px-4 py-6 text-[13px] text-center" style={{ color: "var(--muted)" }}>No matches for &ldquo;{searchQuery}&rdquo;.</div>;
                 }
                 return (
@@ -4903,6 +5197,20 @@ export default function HomePage() {
                             <Repeat className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
                             <span className="flex-1 text-[14px] truncate" style={{ color: "var(--ink2)" }}>{i.title}</span>
                             <span className="text-[11px]" style={{ color: "var(--muted)" }}>{i.frequency}</span>
+                          </button>
+                        ))}
+                      </div>
+                    )}
+                    {matchTemplates.length > 0 && (
+                      <div className="mb-1">
+                        <div className="px-4 pt-2 pb-1 text-[10px] uppercase tracking-[0.12em]" style={{ color: "var(--muted2)" }}>Checklists · {matchTemplates.length}</div>
+                        {matchTemplates.map((t) => (
+                          <button key={t.id}
+                            onClick={() => { setSearchOpen(false); openChecklistLibrary(t.id); }}
+                            className="hovrow w-full flex items-center gap-3 px-4 py-2 text-left">
+                            <ListChecks className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
+                            <span className="flex-1 text-[14px] truncate" style={{ color: "var(--ink2)" }}>{t.name}</span>
+                            <span className="text-[11px]" style={{ color: "var(--muted)" }}>{t.stepCount} step{t.stepCount === 1 ? "" : "s"}</span>
                           </button>
                         ))}
                       </div>
