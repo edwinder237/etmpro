@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, useEffect, useRef, useCallback, useMemo, Fragment } from "react";
+import { useState, useEffect, useRef, useCallback, useMemo, Fragment, type ReactNode } from "react";
 import {
   ListChecks,
   Search,
@@ -66,6 +66,22 @@ import toast, { Toaster } from "react-hot-toast";
 import { UserButton, useUser } from "@clerk/nextjs";
 import * as DropdownMenu from "@radix-ui/react-dropdown-menu";
 import * as Dialog from "@radix-ui/react-dialog";
+import {
+  DndContext,
+  PointerSensor,
+  closestCenter,
+  useSensor,
+  useSensors,
+  type DragEndEvent,
+  type Modifier,
+} from "@dnd-kit/core";
+import {
+  SortableContext,
+  arrayMove,
+  useSortable,
+  verticalListSortingStrategy,
+} from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { useAudioFeedback } from "~/hooks/useAudioFeedback";
 
 type TaskQuadrant = "urgent-important" | "important-not-urgent" | "urgent-not-important" | "not-urgent-not-important";
@@ -308,12 +324,44 @@ function shiftYmd(s: string, days: number): string {
 const NEXT_ACTION_CLEARED = "__none__";
 const NEXT_ACTION_KEY = "eisenq-next-action";
 
+// Matrix rows only travel up and down their own list.
+const lockToVerticalAxis: Modifier = ({ transform }) => ({ ...transform, x: 0 });
+
+type SortableRowHandle = Pick<ReturnType<typeof useSortable>, "listeners" | "setActivatorNodeRef" | "isDragging">;
+
+// One "Up next" row. The grip inside is the drag handle; rows that follow their
+// due date (or are done) render the same but stay put.
+function SortableTaskRow({ id, disabled, children }: {
+  id: string;
+  disabled: boolean;
+  children: (handle: SortableRowHandle) => ReactNode;
+}) {
+  const { listeners, setNodeRef, setActivatorNodeRef, transform, transition, isDragging } =
+    useSortable({ id, disabled });
+  return (
+    <div ref={setNodeRef} className="group flex items-center gap-[11px] rounded-[8px]"
+      style={{
+        transform: CSS.Translate.toString(transform),
+        transition,
+        position: "relative",
+        zIndex: isDragging ? 10 : undefined,
+        background: isDragging ? "var(--surface)" : undefined,
+        boxShadow: isDragging ? "0 0 0 6px var(--surface), 0 10px 24px -10px rgba(0,0,0,0.45)" : undefined,
+      }}>
+      {children({ listeners, setActivatorNodeRef, isDragging })}
+    </div>
+  );
+}
+
 export default function HomePage() {
   const [tasks, setTasks] = useState<Task[]>([]);
   const [searchQuery, setSearchQuery] = useState("");
   const [searchOpen, setSearchOpen] = useState(false);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [nextActionChoice, setNextActionChoice] = useState<Partial<Record<TaskQuadrant, string>>>({});
+  // The "Up next" row whose grip menu is open. Controlled so the grip opens it
+  // on click and stays free to start a drag on press.
+  const [rowMenuTaskId, setRowMenuTaskId] = useState<string | null>(null);
   // "Nest under task" picker (searchable + quadrant-filterable)
   const [nestPickerOpen, setNestPickerOpen] = useState(false);
   const [nestSearch, setNestSearch] = useState("");
@@ -3199,6 +3247,29 @@ export default function HomePage() {
       if (idx === arr.length - 1) return;
       [arr[idx + 1], arr[idx]] = [arr[idx]!, arr[idx + 1]!];
     }
+    await saveQuadrantOrder(arr);
+  };
+
+  // Drag-to-reorder for the "Up next" rows. Only unscheduled, open tasks can be
+  // picked up or dropped on, so a move never leaves that block of the quadrant.
+  const taskSensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  const handleTaskDragEnd = ({ active, over }: DragEndEvent) => {
+    if (!over || active.id === over.id) return;
+    const task = tasks.find(t => t._id === active.id);
+    if (!task) return;
+    // Move within the full ordered quadrant (headline included), so the next
+    // action keeps its slot whether it was pinned or auto-picked.
+    const ordered = getOrderedQuadrantTasks(task.quadrant);
+    const from = ordered.findIndex(t => t._id === active.id);
+    const to = ordered.findIndex(t => t._id === over.id);
+    if (from === -1 || to === -1) return;
+    void saveQuadrantOrder(arrayMove(ordered, from, to));
+  };
+
+  // Save a quadrant's order as manual sort positions: shown at once, then
+  // persisted; a failed save reloads the real order.
+  const saveQuadrantOrder = async (arr: Task[]) => {
     const items = arr.map((t, i) => ({ id: t._id, sortOrder: i }));
     const orderMap = new Map(items.map(it => [it.id, it.sortOrder]));
     setTasks(prev => prev.map(t => orderMap.has(t._id) ? { ...t, sortOrder: orderMap.get(t._id) } : t));
@@ -4661,6 +4732,9 @@ export default function HomePage() {
                         {upNext.length > 0 && (
                           <div className="mt-4 pt-[15px]" style={{ borderTop: "1px solid var(--line2)" }}>
                             <div className="text-[10px] tracking-[0.12em] uppercase mb-3" style={{ color: "var(--muted4)" }}>Up next</div>
+                            <DndContext id={`tasks-${quadrant}`} sensors={taskSensors} collisionDetection={closestCenter}
+                              modifiers={[lockToVerticalAxis]} onDragEnd={handleTaskDragEnd}>
+                            <SortableContext items={upNext.map(t => t._id)} strategy={verticalListSortingStrategy}>
                             <div className="flex flex-col gap-[11px]">
                               {upNext.map((t, i) => {
                                 // Rows are grouped scheduled → unscheduled → completed.
@@ -4670,6 +4744,9 @@ export default function HomePage() {
                                 const prevDone = prev?.status === "completed";
                                 const showCompletedDivider = done && !prevDone;
                                 const showUnscheduledDivider = !done && !t.dueDate && !!prev?.dueDate;
+                                // Dated tasks follow their due date and done ones sink, so
+                                // only unscheduled open tasks can be dragged.
+                                const draggable = !done && !t.dueDate;
                                 return (
                                 <Fragment key={t._id}>
                                 {showUnscheduledDivider && (
@@ -4684,7 +4761,8 @@ export default function HomePage() {
                                     <span className="flex-1 h-px" style={{ background: "var(--line2)" }} />
                                   </div>
                                 )}
-                                <div className="group flex items-center gap-[11px]">
+                                <SortableTaskRow id={t._id} disabled={!draggable}>
+                                {(handle) => (<>
                                   <span className={cn("qcheck", t.status === "completed" && "checked")}
                                     style={{ opacity: t.status !== "completed" && checklistGate(t) ? 0.5 : undefined }}
                                     title={checklistGate(t) ? `${checklistGate(t)!.remaining} steps left on ${checklistGate(t)!.name}` : undefined}
@@ -4730,9 +4808,17 @@ export default function HomePage() {
                                       <Clock className="w-[11px] h-[11px]" />{formatShortDuration(t.duration)}
                                     </span>
                                   )}
-                                  <DropdownMenu.Root>
-                                    <DropdownMenu.Trigger asChild>
-                                      <button className="shrink-0 p-0.5 rounded outline-none opacity-40 hover:opacity-100 transition-opacity" title="Reorder" style={{ color: "var(--muted4)" }}>
+                                  <DropdownMenu.Root open={rowMenuTaskId === t._id} onOpenChange={(open) => setRowMenuTaskId(open ? t._id : null)}>
+                                    {/* The grip drags the row on press-and-move and opens the menu
+                                        on click: the default-prevented pointerdown keeps Radix from
+                                        opening it on press (dnd-kit's listener runs first), and
+                                        dnd-kit swallows the click that ends a drag. */}
+                                    <DropdownMenu.Trigger asChild onPointerDown={(e) => e.preventDefault()} onClick={() => setRowMenuTaskId(t._id)}>
+                                      <button ref={handle.setActivatorNodeRef} {...handle.listeners}
+                                        className={cn("shrink-0 p-0.5 rounded outline-none opacity-40 hover:opacity-100 transition-opacity",
+                                          draggable && "cursor-grab active:cursor-grabbing touch-none",
+                                          handle.isDragging && "opacity-100")}
+                                        title={draggable ? "Drag to reorder · click for options" : "Options"} style={{ color: "var(--muted4)" }}>
                                         <GripVertical className="w-[14px] h-[14px]" />
                                       </button>
                                     </DropdownMenu.Trigger>
@@ -4767,11 +4853,14 @@ export default function HomePage() {
                                       </DropdownMenu.Content>
                                     </DropdownMenu.Portal>
                                   </DropdownMenu.Root>
-                                </div>
+                                </>)}
+                                </SortableTaskRow>
                                 </Fragment>
                                 );
                               })}
                             </div>
+                            </SortableContext>
+                            </DndContext>
                           </div>
                         )}
                       </>
