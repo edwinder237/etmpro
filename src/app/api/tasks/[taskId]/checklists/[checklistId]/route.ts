@@ -4,7 +4,14 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { tasksCollection } from "~/server/db";
 import type { TaskChecklist, TaskChecklistStep } from "~/server/db/schema";
-import { loadMyndlistCredentials, saveStepsToMyndlist } from "~/server/myndlist";
+import { refreshStepsFromTemplate } from "~/lib/checklist-steps";
+import {
+  callMyndlist,
+  flattenChecklist,
+  loadMyndlistCredentials,
+  saveStepsToMyndlist,
+  type MyndlistChecklist,
+} from "~/server/myndlist";
 
 // PATCH  /api/tasks/[taskId]/checklists/[checklistId] — mutate one attached checklist
 // DELETE /api/tasks/[taskId]/checklists/[checklistId] — detach it
@@ -24,6 +31,7 @@ const patchSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("reorderSteps"), stepIds: z.array(z.string().min(1)).max(500) }),
   z.object({ op: z.literal("reset") }),
   z.object({ op: z.literal("pushToTemplate") }),
+  z.object({ op: z.literal("pullFromTemplate") }),
 ]);
 
 /** Renumbers `order` so it always matches array position after a mutation. */
@@ -141,6 +149,33 @@ export async function PATCH(
           return NextResponse.json({ error: message }, { status: 502 });
         }
         return NextResponse.json({ checklist: current, pushed: true });
+      }
+      case "pullFromTemplate": {
+        // The reverse, also only on explicit user action: the copy is rebuilt
+        // from the template as it is now (steps, optional flags, notes, name),
+        // keeping the ticks on steps that are still there.
+        if (!current.sourceId) {
+          return NextResponse.json({ error: "This checklist is no longer linked to a template." }, { status: 400 });
+        }
+        const creds = await loadMyndlistCredentials(userId);
+        if (!creds.apiUrl || !creds.apiKey) {
+          return NextResponse.json({ error: "Myndlist is not connected" }, { status: 400 });
+        }
+        const result = await callMyndlist<{ checklist: MyndlistChecklist }>(
+          creds,
+          `/checklists/${encodeURIComponent(current.sourceId)}`
+        );
+        if (result.outcome !== "ok") {
+          const message = result.outcome === "http-error" ? result.message : "Couldn't reach Myndlist.";
+          return NextResponse.json({ error: message }, { status: 502 });
+        }
+        const template = flattenChecklist(result.data.checklist);
+        next = {
+          ...current,
+          name: template.name,
+          steps: refreshStepsFromTemplate(current.steps, template.steps, () => crypto.randomUUID()),
+        };
+        break;
       }
     }
 

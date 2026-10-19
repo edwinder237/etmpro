@@ -211,3 +211,85 @@ export function mergeStepsIntoSections(
 
   return out;
 }
+
+// ---------------------------------------------------------------------------
+// Bringing a task's copy up to date with its template.
+//
+// A copy is a snapshot taken at attach time, so a step marked optional, added
+// or renamed in Myndlist afterwards never reaches it. "Update from checklist"
+// rebuilds the copy from the template as it is now, keeping what was ticked:
+// - The template's steps come in its order, each with its own text, optional
+//   flag and note.
+// - A template step keeps the id and tick of the copy step it matches: by
+//   sourceItemId, then by text (copies attached before ids were recorded),
+//   first come first served. One with no match arrives unticked.
+// - A copy step left unmatched is dropped if it came from the template (it was
+//   removed there). One with no sourceItemId may have been added on this task,
+//   so it is kept, after the template's steps.
+// ---------------------------------------------------------------------------
+
+export interface CopiedStep extends StepLike {
+  id: string;
+  order: number;
+  doneAt?: Date;
+  note?: string;
+  sourceItemId?: string;
+}
+
+export interface TemplateStep {
+  id: string;
+  text: string;
+  optional: boolean;
+  note: string;
+}
+
+export function refreshStepsFromTemplate(
+  copy: readonly CopiedStep[],
+  template: readonly TemplateStep[],
+  newId: () => string,
+): CopiedStep[] {
+  const ordered = [...copy].sort((a, b) => a.order - b.order);
+  const claimed = new Set<CopiedStep>();
+
+  const bySource = new Map<string, CopiedStep>();
+  for (const step of ordered) {
+    if (step.sourceItemId && !bySource.has(step.sourceItemId)) bySource.set(step.sourceItemId, step);
+  }
+  const matches: Array<CopiedStep | undefined> = template.map((item) => {
+    const step = bySource.get(item.id);
+    if (!step || claimed.has(step)) return undefined;
+    claimed.add(step);
+    return step;
+  });
+
+  const byText = new Map<string, CopiedStep[]>();
+  for (const step of ordered) {
+    if (claimed.has(step)) continue;
+    const key = step.text.trim();
+    byText.set(key, [...(byText.get(key) ?? []), step]);
+  }
+  template.forEach((item, i) => {
+    if (matches[i]) return;
+    const step = byText.get(item.text.trim())?.shift();
+    if (step) {
+      claimed.add(step);
+      matches[i] = step;
+    }
+  });
+
+  const refreshed: CopiedStep[] = template.map((item, i) => {
+    const match = matches[i];
+    return {
+      id: match?.id ?? newId(),
+      text: item.text,
+      order: i,
+      done: match?.done ?? false,
+      ...(match?.done && match.doneAt ? { doneAt: match.doneAt } : {}),
+      optional: item.optional,
+      ...(item.note ? { note: item.note } : {}),
+      sourceItemId: item.id,
+    };
+  });
+  const addedHere = ordered.filter((s) => !claimed.has(s) && !s.sourceItemId && !isBlankStep(s));
+  return [...refreshed, ...addedHere.map((s, j) => ({ ...s, order: refreshed.length + j }))];
+}

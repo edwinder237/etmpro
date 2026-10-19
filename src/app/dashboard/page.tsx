@@ -2724,6 +2724,18 @@ export default function HomePage() {
     }
   };
 
+  const handlePullChecklistFromTemplate = async (taskId: string, checklistId: string) => {
+    try {
+      // Pending ticks land first, so the rebuilt copy keeps them.
+      await flushAllStepOps();
+      const { checklist } = await patchChecklist(taskId, checklistId, { op: "pullFromTemplate" });
+      applyTaskChecklists(taskId, mapChecklist(checklistId, () => checklist));
+      toast.success("Updated from your checklist library");
+    } catch {
+      toast.error("Couldn't update from the library");
+    }
+  };
+
   const handleToggleComplete = async (task: Task) => {
     // Only completing is gated. Un-completing must never be blocked, or a gated
     // task completed by another path would be stuck completed forever.
@@ -6140,9 +6152,14 @@ export default function HomePage() {
                                   Reset all steps
                                 </DropdownMenu.Item>
                                 {checklist.sourceId && (
-                                  <DropdownMenu.Item className={MENU_ITEM} onSelect={() => void handlePushChecklistToTemplate(editingTask._id, checklist.id)}>
-                                    Save changes to checklist
-                                  </DropdownMenu.Item>
+                                  <>
+                                    <DropdownMenu.Item className={MENU_ITEM} onSelect={() => void handlePullChecklistFromTemplate(editingTask._id, checklist.id)}>
+                                      Update from checklist
+                                    </DropdownMenu.Item>
+                                    <DropdownMenu.Item className={MENU_ITEM} onSelect={() => void handlePushChecklistToTemplate(editingTask._id, checklist.id)}>
+                                      Save changes to checklist
+                                    </DropdownMenu.Item>
+                                  </>
                                 )}
                                 <DropdownMenu.Separator className="h-px my-1" style={{ background: "var(--line3)" }} />
                                 <DropdownMenu.Item className={MENU_ITEM} style={{ color: "var(--tag-fg)" }}
