@@ -2,6 +2,7 @@ import { userSettingsCollection } from "~/server/db";
 import { decrypt } from "~/server/crypto";
 import { safeFetch } from "~/server/safe-fetch";
 import type { TaskChecklistStep } from "~/server/db/schema";
+import { isBlankStep, mergeStepsIntoSections, type EditedStep } from "~/lib/checklist-steps";
 
 // One place that knows how to talk to a user's Myndlist account, so the library
 // drawer, the attach picker and the Settings "Test connection" button all
@@ -9,7 +10,8 @@ import type { TaskChecklistStep } from "~/server/db/schema";
 //
 // Myndlist stores the reusable checklists; the ticked copy lives on the task
 // (see TaskChecklist in db/schema.ts) and never travels back here, except when
-// the user explicitly pushes edits to the template.
+// the user explicitly pushes edits to the template. Where per-task progress
+// should ultimately live is still open; nothing here assumes it stays on the task.
 
 export interface MyndlistCredentials {
   apiUrl: string;
@@ -17,7 +19,7 @@ export interface MyndlistCredentials {
 }
 
 /** Shapes returned by the Myndlist REST API (docs/API.md in edwinder237/myndlist). */
-export interface MyndlistItem { id: string; text: string; done: boolean }
+export interface MyndlistItem { id: string; text: string; done: boolean; note?: string; optional?: boolean }
 export interface MyndlistSection { id: string; title: string; collapsed?: boolean; items: MyndlistItem[] }
 export interface MyndlistChecklist {
   id: string;
@@ -28,13 +30,27 @@ export interface MyndlistChecklist {
   updatedAt?: string;
 }
 
+export interface FlatStep {
+  id: string;
+  text: string;
+  done: boolean;
+  optional: boolean;
+  note: string;
+}
+
 /** A Myndlist checklist as this app consumes it: one flat, ordered step list. */
 export interface FlatTemplate {
   id: string;
   name: string;
-  steps: Array<{ id: string; text: string; done: boolean }>;
+  /** Blank items are left out: they count for nothing and only show as empty rows. */
+  steps: FlatStep[];
   /** Kept so a step can be written back to the right place in Myndlist. */
   lastSectionId: string | null;
+}
+
+/** A template step as the browser sees it in the library. */
+export function publicStep(step: FlatStep) {
+  return { id: step.id, text: step.text, optional: step.optional, note: step.note };
 }
 
 /**
@@ -131,17 +147,22 @@ export async function callMyndlist<T>(
 
 /**
  * Collapses Myndlist's sections into the single ordered list this app's design
- * shows. Section titles are not displayed here, but nothing is destroyed — they
- * stay intact in Myndlist.
+ * shows. Section titles are not displayed here, and nothing is destroyed: edits
+ * are written back with mergeStepsIntoSections, which keeps sections, ids,
+ * notes and optional flags intact in Myndlist.
  */
 export function flattenChecklist(checklist: MyndlistChecklist): FlatTemplate {
   const sections = checklist.sections ?? [];
   const steps = sections.flatMap((section) =>
-    (section.items ?? []).map((item) => ({
-      id: item.id,
-      text: item.text,
-      done: Boolean(item.done),
-    }))
+    (section.items ?? [])
+      .filter((item) => !isBlankStep(item))
+      .map((item) => ({
+        id: item.id,
+        text: item.text,
+        done: Boolean(item.done),
+        optional: item.optional === true,
+        note: typeof item.note === "string" ? item.note : "",
+      }))
   );
   return {
     id: checklist.id,
@@ -154,7 +175,10 @@ export function flattenChecklist(checklist: MyndlistChecklist): FlatTemplate {
 /**
  * Deep-copies a template's steps for attachment to a task. Fresh ids, every step
  * unticked: the instance is independent from this moment on, so editing the
- * template later does not rewrite history on tasks that already ran it.
+ * template later does not rewrite history on tasks that already ran it. The
+ * optional flag and note come along, and `sourceItemId` remembers which
+ * Myndlist item each step came from so "Save changes to checklist" can update
+ * that item in place.
  */
 export function copyStepsForAttach(template: FlatTemplate): TaskChecklistStep[] {
   return template.steps.map((step, index) => ({
@@ -162,5 +186,30 @@ export function copyStepsForAttach(template: FlatTemplate): TaskChecklistStep[] 
     text: step.text,
     order: index,
     done: false,
+    optional: step.optional,
+    ...(step.note ? { note: step.note } : {}),
+    sourceItemId: step.id,
   }));
+}
+
+/**
+ * Saves an edited flat step list back to a Myndlist checklist without losing
+ * what this app doesn't show: reads the checklist as it is now, merges the
+ * edits into it (see mergeStepsIntoSections), and writes the result.
+ */
+export async function saveStepsToMyndlist(
+  creds: MyndlistCredentials,
+  checklistId: string,
+  steps: EditedStep[],
+  extra: { title?: string } = {}
+): Promise<MyndlistResult<{ checklist: MyndlistChecklist }>> {
+  const path = `/checklists/${encodeURIComponent(checklistId)}`;
+  const current = await callMyndlist<{ checklist: MyndlistChecklist }>(creds, path);
+  if (current.outcome !== "ok") return current;
+
+  const sections = mergeStepsIntoSections(current.data.checklist.sections ?? [], steps);
+  return callMyndlist<{ checklist: MyndlistChecklist }>(creds, path, {
+    method: "PATCH",
+    body: JSON.stringify({ ...extra, sections }),
+  });
 }

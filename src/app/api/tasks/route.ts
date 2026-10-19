@@ -4,6 +4,7 @@ import type { Task, TaskQuadrant, TaskPriority, TaskStatus } from "~/server/db/s
 import { ObjectId } from "mongodb";
 import { auth } from "@clerk/nextjs/server";
 import { z } from "zod";
+import { requiredStepsLeft } from "~/lib/checklist-steps";
 
 // Escape special regex characters to prevent NoSQL injection
 function escapeRegex(str: string): string {
@@ -262,6 +263,7 @@ export async function PUT(request: NextRequest) {
 
     // A checklist only gates completion if its template opted in. Enforced here
     // rather than in the client: a gate the browser alone applies is decorative.
+    // Only required steps count; optional and blank ones never block.
     // Un-completing is never blocked, or a gated task completed by some other
     // path would be stuck completed forever.
     if (restUpdateData.status === "completed") {
@@ -270,7 +272,7 @@ export async function PUT(request: NextRequest) {
       let blockingName = "";
       for (const checklist of existing?.checklists ?? []) {
         if (!checklist.blockCompletion) continue;
-        const left = checklist.steps.filter((step) => !step.done).length;
+        const left = requiredStepsLeft(checklist.steps);
         if (left > 0) {
           if (remaining === 0) blockingName = checklist.name;
           remaining += left;
@@ -279,7 +281,7 @@ export async function PUT(request: NextRequest) {
       if (remaining > 0) {
         return NextResponse.json(
           {
-            error: `${remaining} step${remaining === 1 ? "" : "s"} left on ${blockingName}`,
+            error: `${remaining} required step${remaining === 1 ? "" : "s"} left on ${blockingName}`,
             checklistBlocked: true,
             remaining,
             checklistName: blockingName,

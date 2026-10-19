@@ -125,6 +125,13 @@ body.paper {
   border-color: var(--accent);
   background: var(--pill-active);
 }
+/* Optional checklist steps: dashed ring, and a lighter fill once ticked. */
+.qcheck.optional {
+  border-style: dashed;
+}
+.qcheck.optional.checked {
+  opacity: 0.65;
+}
 .navbtn {
   width: 38px;
   height: 38px;

@@ -6,18 +6,30 @@ import {
   loadMyndlistCredentials,
   callMyndlist,
   flattenChecklist,
+  publicStep,
+  saveStepsToMyndlist,
   type MyndlistChecklist,
 } from "~/server/myndlist";
 
 // GET/PATCH/DELETE /api/myndlist/checklists/[id] — one reusable checklist.
 //
-// PATCH replaces the whole step list, because this app presents a flattened
-// view and reordering across sections has no granular equivalent in the
-// Myndlist API (its own docs point at the replace-all route for that).
+// PATCH takes the edited flat step list and merges it into the checklist as it
+// is in Myndlist (saveStepsToMyndlist), so sections, notes and optional flags
+// that this app doesn't show survive the edit.
 
 const patchSchema = z.object({
   name: z.string().min(1).max(500).optional(),
-  steps: z.array(z.object({ text: z.string().max(5000) })).max(500).optional(),
+  steps: z
+    .array(
+      z.object({
+        // The Myndlist item id for steps that came from Myndlist; absent for new ones.
+        id: z.string().max(200).optional(),
+        text: z.string().max(5000),
+        optional: z.boolean().optional(),
+      })
+    )
+    .max(500)
+    .optional(),
   blockCompletion: z.boolean().optional(),
 });
 
@@ -47,7 +59,7 @@ export async function GET(_request: NextRequest, { params }: { params: Promise<{
       template: {
         id: flat.id,
         name: flat.name,
-        steps: flat.steps.map((s) => ({ id: s.id, text: s.text })),
+        steps: flat.steps.map(publicStep),
         stepCount: flat.steps.length,
         blockCompletion: settings?.checklistGates?.[flat.id] ?? false,
       },
@@ -95,19 +107,18 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       return NextResponse.json({ error: "Myndlist is not connected" }, { status: 400 });
     }
 
-    const body: Record<string, unknown> = {};
-    if (name !== undefined) body.title = name;
-    if (steps !== undefined) {
-      body.sections = [
-        { title: "Steps", items: steps.filter((s) => s.text.trim()).map((s) => ({ text: s.text, done: false })) },
-      ];
-    }
-
-    const result = await callMyndlist<{ checklist: MyndlistChecklist }>(
-      creds,
-      `/checklists/${encodeURIComponent(id)}`,
-      { method: "PATCH", body: JSON.stringify(body) }
-    );
+    const result =
+      steps !== undefined
+        ? await saveStepsToMyndlist(
+            creds,
+            id,
+            steps.map((s) => ({ sourceItemId: s.id, text: s.text, optional: s.optional })),
+            name !== undefined ? { title: name } : {}
+          )
+        : await callMyndlist<{ checklist: MyndlistChecklist }>(creds, `/checklists/${encodeURIComponent(id)}`, {
+            method: "PATCH",
+            body: JSON.stringify({ title: name }),
+          });
     if (result.outcome !== "ok") {
       const message = result.outcome === "http-error" ? result.message : "Couldn't reach Myndlist.";
       return NextResponse.json({ error: message }, { status: 502 });
@@ -118,7 +129,7 @@ export async function PATCH(request: NextRequest, { params }: { params: Promise<
       template: {
         id: flat.id,
         name: flat.name,
-        steps: flat.steps.map((s) => ({ id: s.id, text: s.text })),
+        steps: flat.steps.map(publicStep),
         stepCount: flat.steps.length,
         blockCompletion: blockCompletion ?? false,
       },

@@ -17,6 +17,9 @@ export interface TaskChecklistStep {
   order: number;
   done: boolean;
   doneAt?: Date;
+  optional?: boolean;         // copied from Myndlist; optional steps never block completion
+  note?: string;              // copied from Myndlist; read-only reference shown under the step
+  sourceItemId?: string;      // the Myndlist item this step was copied from, so edits can be saved back in place
 }
 
 export interface TaskChecklist {
