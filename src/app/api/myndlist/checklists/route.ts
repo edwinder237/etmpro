@@ -6,6 +6,7 @@ import {
   loadMyndlistCredentials,
   callMyndlist,
   flattenChecklist,
+  publicStep,
   type MyndlistChecklist,
 } from "~/server/myndlist";
 
@@ -16,7 +17,11 @@ import {
 
 const createSchema = z.object({
   name: z.string().min(1).max(500),
-  steps: z.array(z.string().max(5000)).max(500).optional(),
+  // Plain text, or text with the optional flag.
+  steps: z
+    .array(z.union([z.string().max(5000), z.object({ text: z.string().max(5000), optional: z.boolean().optional() })]))
+    .max(500)
+    .optional(),
 });
 
 /**
@@ -73,7 +78,7 @@ export async function GET(request: NextRequest) {
       return {
         id: flat.id,
         name: flat.name,
-        steps: flat.steps.map((s) => ({ id: s.id, text: s.text })),
+        steps: flat.steps.map(publicStep),
         stepCount: flat.steps.length,
         usageCount: usage[flat.id] ?? 0,
         blockCompletion: gates[flat.id] ?? false,
@@ -112,14 +117,16 @@ export async function POST(request: NextRequest) {
       return NextResponse.json({ error: "Connect Myndlist in Settings → Integrations first." }, { status: 400 });
     }
 
-    const steps = (parsed.data.steps ?? []).filter((t) => t.trim());
+    const steps = (parsed.data.steps ?? [])
+      .map((s) => (typeof s === "string" ? { text: s, optional: false } : { text: s.text, optional: s.optional ?? false }))
+      .filter((s) => s.text.trim());
     const result = await callMyndlist<{ checklist: MyndlistChecklist }>(creds, "/checklists", {
       method: "POST",
       body: JSON.stringify({
         title: parsed.data.name,
         // One section holds every step: this app presents checklists flat, and a
         // single section is where new steps get appended.
-        sections: [{ title: "Steps", items: steps.map((text) => ({ text, done: false })) }],
+        sections: [{ title: "Steps", items: steps.map((s) => ({ text: s.text, done: false, optional: s.optional })) }],
       }),
     });
 
@@ -134,7 +141,7 @@ export async function POST(request: NextRequest) {
         template: {
           id: flat.id,
           name: flat.name,
-          steps: flat.steps.map((s) => ({ id: s.id, text: s.text })),
+          steps: flat.steps.map(publicStep),
           stepCount: flat.steps.length,
           usageCount: 0,
           blockCompletion: false,

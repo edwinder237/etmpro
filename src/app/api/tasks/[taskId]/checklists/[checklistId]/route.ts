@@ -4,7 +4,7 @@ import { ObjectId } from "mongodb";
 import { z } from "zod";
 import { tasksCollection } from "~/server/db";
 import type { TaskChecklist, TaskChecklistStep } from "~/server/db/schema";
-import { loadMyndlistCredentials, callMyndlist, type MyndlistChecklist } from "~/server/myndlist";
+import { loadMyndlistCredentials, saveStepsToMyndlist } from "~/server/myndlist";
 
 // PATCH  /api/tasks/[taskId]/checklists/[checklistId] — mutate one attached checklist
 // DELETE /api/tasks/[taskId]/checklists/[checklistId] — detach it
@@ -20,6 +20,7 @@ const patchSchema = z.discriminatedUnion("op", [
   z.object({ op: z.literal("addStep"), text: z.string().min(1).max(5000) }),
   z.object({ op: z.literal("removeStep"), stepId: z.string().min(1) }),
   z.object({ op: z.literal("updateStep"), stepId: z.string().min(1), text: z.string().min(1).max(5000) }),
+  z.object({ op: z.literal("setOptional"), stepId: z.string().min(1), optional: z.boolean() }),
   z.object({ op: z.literal("reorderSteps"), stepIds: z.array(z.string().min(1)).max(500) }),
   z.object({ op: z.literal("reset") }),
   z.object({ op: z.literal("pushToTemplate") }),
@@ -95,6 +96,13 @@ export async function PATCH(
           steps: current.steps.map((s) => (s.id === body.stepId ? { ...s, text: body.text.trim() } : s)),
         };
         break;
+      case "setOptional":
+        // For this copy only; "Save changes to checklist" carries it to the template.
+        next = {
+          ...current,
+          steps: current.steps.map((s) => (s.id === body.stepId ? { ...s, optional: body.optional } : s)),
+        };
+        break;
       case "reorderSteps": {
         const byId = new Map(current.steps.map((s) => [s.id, s]));
         const ordered = body.stepIds.map((id) => byId.get(id)).filter((s): s is TaskChecklistStep => Boolean(s));
@@ -116,22 +124,17 @@ export async function PATCH(
         if (!creds.apiUrl || !creds.apiKey) {
           return NextResponse.json({ error: "Myndlist is not connected" }, { status: 400 });
         }
-        const result = await callMyndlist<{ checklist: MyndlistChecklist }>(
+        // Merged into the template as it is now: steps that came from it update
+        // their own item in place (note, section and id kept), new steps slot in
+        // after their neighbour, and the template's own ticks are left alone.
+        const result = await saveStepsToMyndlist(
           creds,
-          `/checklists/${encodeURIComponent(current.sourceId)}`,
-          {
-            method: "PATCH",
-            body: JSON.stringify({
-              sections: [
-                {
-                  title: "Steps",
-                  items: [...current.steps]
-                    .sort((a, b) => a.order - b.order)
-                    .map((s) => ({ text: s.text, done: false })),
-                },
-              ],
-            }),
-          }
+          current.sourceId,
+          [...current.steps]
+            .sort((a, b) => a.order - b.order)
+            // `optional` is left undefined on copies made before the flag existed,
+            // so the template keeps whatever flag it has rather than losing it.
+            .map((s) => ({ sourceItemId: s.sourceItemId ?? null, text: s.text, optional: s.optional }))
         );
         if (result.outcome !== "ok") {
           const message = result.outcome === "http-error" ? result.message : "Couldn't reach Myndlist.";

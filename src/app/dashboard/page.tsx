@@ -1,7 +1,11 @@
 "use client";
 
 import { useState, useEffect, useRef, useCallback, useMemo, Fragment, type ReactNode } from "react";
+import { isBlankStep, requiredStepsLeft, stepProgress } from "~/lib/checklist-steps";
+import { LinkifiedText } from "~/components/LinkifiedText";
 import {
+  CircleDashed,
+  CircleDot,
   ListChecks,
   Search,
   Sun,
@@ -119,6 +123,8 @@ interface TaskChecklistStep {
   order: number;
   done: boolean;
   doneAt?: string;
+  optional?: boolean; // never blocks completion
+  note?: string;      // read-only reference from Myndlist
 }
 
 interface TaskChecklist {
@@ -131,13 +137,27 @@ interface TaskChecklist {
 }
 
 // A row in the Myndlist library (the reusable original, not an attached copy).
+interface MyndlistTemplateStep {
+  id: string;
+  text: string;
+  optional?: boolean;
+  note?: string;
+}
+
 interface MyndlistTemplate {
   id: string;
   name: string;
-  steps: { id: string; text: string }[];
+  steps: MyndlistTemplateStep[];
   stepCount: number;
   usageCount: number;
   blockCompletion: boolean;
+}
+
+/** "12 steps · 2 optional" for a library row. */
+function templateStepSummary(template: MyndlistTemplate): string {
+  const optional = template.steps.filter((s) => s.optional).length;
+  const steps = `${template.stepCount} step${template.stepCount === 1 ? "" : "s"}`;
+  return optional ? `${steps} · ${optional} optional` : steps;
 }
 
 type GoalPeriodType = "week" | "month" | "year" | "custom";
@@ -460,7 +480,8 @@ export default function HomePage() {
   const [myndlistError, setMyndlistError] = useState("");
   const [myndlistFetchedAt, setMyndlistFetchedAt] = useState(0);
   const [expandedTemplateId, setExpandedTemplateId] = useState<string | null>(null);
-  const [templateDraft, setTemplateDraft] = useState<{ name: string; blockCompletion: boolean; steps: { id: string; text: string }[] } | null>(null);
+  // Draft steps keep their Myndlist id (new ones get a "new-" id) so saving can update items in place.
+  const [templateDraft, setTemplateDraft] = useState<{ name: string; blockCompletion: boolean; steps: MyndlistTemplateStep[] } | null>(null);
   const [templateSaving, setTemplateSaving] = useState(false);
   const [newTemplateStep, setNewTemplateStep] = useState("");
 
@@ -1038,7 +1059,13 @@ export default function HomePage() {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           name: templateDraft.name.trim() || "Untitled checklist",
-          steps: templateDraft.steps.filter((s) => s.text.trim()).map((s) => ({ text: s.text })),
+          steps: templateDraft.steps
+            .filter((s) => s.text.trim())
+            .map((s) => ({
+              ...(s.id.startsWith("new-") ? {} : { id: s.id }),
+              text: s.text,
+              optional: Boolean(s.optional),
+            })),
           blockCompletion: templateDraft.blockCompletion,
         }),
       });
@@ -2486,14 +2513,14 @@ export default function HomePage() {
   const mapChecklist = (checklistId: string, f: (c: TaskChecklist) => TaskChecklist) =>
     (lists: TaskChecklist[]) => lists.map(c => (c.id === checklistId ? f(c) : c));
 
-  /** Steps outstanding on any checklist that opted into gating, or null. */
+  /** Required steps outstanding on any checklist that opted into gating, or null. Optional steps never block. */
   const checklistGate = (task: Task): { remaining: number; name: string; checklistId: string } | null => {
     let remaining = 0;
     let name = "";
     let checklistId = "";
     for (const c of task.checklists ?? []) {
       if (!c.blockCompletion) continue;
-      const left = c.steps.filter(s => !s.done).length;
+      const left = requiredStepsLeft(c.steps);
       if (left > 0) {
         if (remaining === 0) { name = c.name; checklistId = c.id; }
         remaining += left;
@@ -2646,6 +2673,23 @@ export default function HomePage() {
     } catch {
       if (before) applyTaskChecklists(taskId, mapChecklist(checklistId, c => ({ ...c, steps: before })));
       toast.error("Couldn't remove that step");
+    }
+  };
+
+  const handleToggleStepOptional = async (taskId: string, checklistId: string, stepId: string) => {
+    if (stepId.startsWith("tmp-")) return;
+    const before = (editingTask?.checklists ?? []).find(c => c.id === checklistId)?.steps;
+    const step = before?.find(s => s.id === stepId);
+    if (!step) return;
+    const optional = !step.optional;
+    applyTaskChecklists(taskId, mapChecklist(checklistId, c => ({
+      ...c, steps: c.steps.map(x => (x.id === stepId ? { ...x, optional } : x)),
+    })));
+    try {
+      await patchChecklist(taskId, checklistId, { op: "setOptional", stepId, optional });
+    } catch {
+      if (before) applyTaskChecklists(taskId, mapChecklist(checklistId, c => ({ ...c, steps: before })));
+      toast.error("Couldn't change that step");
     }
   };
 
@@ -4679,7 +4723,7 @@ export default function HomePage() {
                           <div className="flex items-start gap-[11px] mt-[3px]">
                             <span className={cn("qcheck", nextAction.status === "completed" && "checked")}
                               style={{ marginTop: 5, opacity: nextAction.status !== "completed" && checklistGate(nextAction) ? 0.5 : undefined }}
-                              title={checklistGate(nextAction) ? `${checklistGate(nextAction)!.remaining} steps left on ${checklistGate(nextAction)!.name}` : undefined}
+                              title={checklistGate(nextAction) ? `${checklistGate(nextAction)!.remaining} required step${checklistGate(nextAction)!.remaining === 1 ? "" : "s"} left on ${checklistGate(nextAction)!.name}` : undefined}
                               onClick={() => void handleToggleComplete(nextAction)} />
                             <div className="text-[17px] font-semibold cursor-pointer" onClick={() => void openTaskForEdit(nextAction)} style={{ color: "var(--ink)", textDecoration: nextAction.status === "completed" ? "line-through" : undefined }}>
                               {nextAction.title}
@@ -4706,7 +4750,7 @@ export default function HomePage() {
                               )}
                               {gateHintTaskId === nextAction._id && checklistGate(nextAction) && (
                                 <span className="text-[12px] font-normal" style={{ color: "var(--tag-fg)" }}>
-                                  {" "}· {checklistGate(nextAction)!.remaining} step{checklistGate(nextAction)!.remaining === 1 ? "" : "s"} left on {checklistGate(nextAction)!.name}
+                                  {" "}· {checklistGate(nextAction)!.remaining} required step{checklistGate(nextAction)!.remaining === 1 ? "" : "s"} left on {checklistGate(nextAction)!.name}
                                 </span>
                               )}
                             </div>
@@ -4765,7 +4809,7 @@ export default function HomePage() {
                                 {(handle) => (<>
                                   <span className={cn("qcheck", t.status === "completed" && "checked")}
                                     style={{ opacity: t.status !== "completed" && checklistGate(t) ? 0.5 : undefined }}
-                                    title={checklistGate(t) ? `${checklistGate(t)!.remaining} steps left on ${checklistGate(t)!.name}` : undefined}
+                                    title={checklistGate(t) ? `${checklistGate(t)!.remaining} required step${checklistGate(t)!.remaining === 1 ? "" : "s"} left on ${checklistGate(t)!.name}` : undefined}
                                     onClick={() => void handleToggleComplete(t)} />
                                   <span className="text-[14px] cursor-pointer flex-1 min-w-0 truncate" onClick={() => void openTaskForEdit(t)}
                                     style={{ color: t.status === "completed" ? "var(--strike)" : "var(--ink3)", textDecoration: t.status === "completed" ? "line-through" : undefined }}>
@@ -4775,7 +4819,7 @@ export default function HomePage() {
                                     <span onClick={() => { setExpandedTaskChecklistIds(new Set([checklistGate(t)!.checklistId])); void openTaskForEdit(t); }}
                                       className="shrink-0 text-[10px] px-[7px] py-px rounded-[5px] cursor-pointer"
                                       style={{ color: "var(--tag-fg)", background: "var(--tag-bg)" }}>
-                                      {checklistGate(t)!.remaining} left on {checklistGate(t)!.name}
+                                      {checklistGate(t)!.remaining} required left on {checklistGate(t)!.name}
                                     </span>
                                   )}
                                   {goalIconOf(t.goalId ? goalsById.get(t.goalId) : undefined) && (
@@ -5367,7 +5411,7 @@ export default function HomePage() {
                       <div className="flex-1 min-w-0">
                         <div className="text-[14px] truncate" style={{ color: "var(--ink)" }}>{template.name}</div>
                         <div className="text-[11.5px] mt-0.5" style={{ color: "var(--muted)" }}>
-                          {template.stepCount} step{template.stepCount === 1 ? "" : "s"} · used {template.usageCount}×
+                          {templateStepSummary(template)} · used {template.usageCount}×
                         </div>
                       </div>
                       <span className="text-[13px]" style={{ color: "var(--muted2)" }}>✎</span>
@@ -5389,17 +5433,41 @@ export default function HomePage() {
 
                     <div style={{ padding: "0 16px" }} className="flex flex-col">
                       {templateDraft.steps.map((step, i) => (
-                        <div key={step.id} className="hovrow flex items-center gap-2.5 rounded-[8px]" style={{ padding: "8px", margin: "0 -8px" }}>
-                          <span className="text-[11px] w-[15px] text-right shrink-0" style={{ color: "var(--num)" }}>{i + 1}</span>
-                          <input
-                            value={step.text}
-                            onChange={(e) => setTemplateDraft({
+                        <div key={step.id} className="hovrow flex items-start gap-2.5 rounded-[8px]" style={{ padding: "8px", margin: "0 -8px" }}>
+                          <span className="text-[11px] w-[15px] text-right shrink-0" style={{ color: "var(--num)", marginTop: 3 }}>{i + 1}</span>
+                          <div className="flex-1 min-w-0">
+                            <input
+                              value={step.text}
+                              onChange={(e) => setTemplateDraft({
+                                ...templateDraft,
+                                steps: templateDraft.steps.map((x) => (x.id === step.id ? { ...x, text: e.target.value } : x)),
+                              })}
+                              aria-label={`Step ${i + 1}`}
+                              className="w-full bg-transparent outline-none text-[13.5px]"
+                              style={{ color: "var(--ink2)" }}
+                            />
+                            {step.note?.trim() && (
+                              <div className="text-[11.5px] mt-0.5 whitespace-pre-wrap break-words" style={{ color: "var(--muted)" }}
+                                title="Notes are edited in Myndlist and kept when you save here">
+                                <LinkifiedText text={step.note} linkStyle={{ color: "var(--accent)" }} />
+                              </div>
+                            )}
+                          </div>
+                          {/* Always visible while editing: whether a step is optional decides what blocks the task. */}
+                          <button
+                            onClick={() => setTemplateDraft({
                               ...templateDraft,
-                              steps: templateDraft.steps.map((x) => (x.id === step.id ? { ...x, text: e.target.value } : x)),
+                              steps: templateDraft.steps.map((x) => (x.id === step.id ? { ...x, optional: !x.optional } : x)),
                             })}
-                            className="flex-1 bg-transparent outline-none text-[13.5px]"
-                            style={{ color: "var(--ink2)" }}
-                          />
+                            role="switch" aria-checked={Boolean(step.optional)}
+                            aria-label={`Step ${i + 1} optional`}
+                            title={step.optional ? "Optional: never blocks the task. Click to make required." : "Required. Click to make optional."}
+                            className="shrink-0 text-[10px] font-semibold uppercase tracking-[0.08em] rounded-full whitespace-nowrap"
+                            style={step.optional
+                              ? { padding: "2px 8px", border: "1px dashed var(--accent)", color: "var(--accent)" }
+                              : { padding: "2px 8px", border: "1px solid var(--line)", color: "var(--muted3)" }}>
+                            {step.optional ? "Optional" : "Required"}
+                          </button>
                           <button
                             onClick={() => setTemplateDraft({ ...templateDraft, steps: templateDraft.steps.filter((x) => x.id !== step.id) })}
                             className="shrink-0 p-0.5 rounded" style={{ color: "var(--muted2)" }} title="Remove step">
@@ -5438,8 +5506,8 @@ export default function HomePage() {
                         <span className="absolute rounded-full" style={{ top: 2, left: templateDraft.blockCompletion ? 16 : 2, width: 14, height: 14, background: "var(--drawer)", transition: "left .15s ease" }} />
                       </button>
                       <div>
-                        <div className="text-[12.5px]" style={{ color: "var(--ink2)" }}>Block the task until every step is ticked</div>
-                        <div className="text-[11.5px] mt-0.5" style={{ color: "var(--muted)" }}>Off by default — steps are a memory aid, not a gate.</div>
+                        <div className="text-[12.5px]" style={{ color: "var(--ink2)" }}>Block the task until every required step is ticked</div>
+                        <div className="text-[11.5px] mt-0.5" style={{ color: "var(--muted)" }}>Off by default — steps are a memory aid, not a gate. Optional steps never block.</div>
                       </div>
                     </div>
 
@@ -5566,7 +5634,7 @@ export default function HomePage() {
                             className="hovrow w-full flex items-center gap-3 px-4 py-2 text-left">
                             <ListChecks className="w-3.5 h-3.5 shrink-0" style={{ color: "var(--muted)" }} />
                             <span className="flex-1 text-[14px] truncate" style={{ color: "var(--ink2)" }}>{t.name}</span>
-                            <span className="text-[11px]" style={{ color: "var(--muted)" }}>{t.stepCount} step{t.stepCount === 1 ? "" : "s"}</span>
+                            <span className="text-[11px]" style={{ color: "var(--muted)" }}>{templateStepSummary(t)}</span>
                           </button>
                         ))}
                       </div>
@@ -6022,10 +6090,19 @@ export default function HomePage() {
                   </div>
 
                   {[...(editingTask.checklists ?? [])].sort((a, b) => a.order - b.order).map((checklist) => {
-                    const done = checklist.steps.filter(s => s.done).length;
-                    const total = checklist.steps.length;
+                    // Counts cover required steps; optional ones are shown separately and never block.
+                    const progress = stepProgress(checklist.steps);
+                    const onlyOptional = progress.total === 0 && progress.optionalTotal > 0;
+                    const countLabel = onlyOptional
+                      ? `${progress.optionalDone}/${progress.optionalTotal}`
+                      : `${progress.done}/${progress.total}`;
+                    const countTitle = onlyOptional
+                      ? `${progress.optionalDone} of ${progress.optionalTotal} optional steps done`
+                      : `${progress.done} of ${progress.total} required steps done` +
+                        (progress.optionalTotal ? `, plus ${progress.optionalTotal} optional (${progress.optionalDone} done)` : "");
                     const open = expandedTaskChecklistIds.has(checklist.id);
-                    const shown = open ? checklist.steps : [];
+                    // Blank rows count for nothing and only show as empty lines, so they're hidden.
+                    const shown = open ? checklist.steps.filter(s => !isBlankStep(s) || s.id.startsWith("tmp-")) : [];
                     return (
                       <div key={checklist.id} className="group rounded-[13px] overflow-hidden mb-2.5"
                         style={{ background: "var(--surface)", border: "1px solid var(--surface-bd)" }}>
@@ -6039,9 +6116,17 @@ export default function HomePage() {
                           <span className="flex-1 min-w-0 truncate text-[14px] font-medium" style={{ color: "var(--ink)" }}>{checklist.name}</span>
                           <span className="flex items-center gap-2 shrink-0">
                             <span className="w-[52px] h-[5px] rounded-full overflow-hidden" style={{ background: "var(--line3)" }}>
-                              <span className="block h-full" style={{ width: total ? `${(done / total) * 100}%` : "0%", background: "var(--pill-active)" }} />
+                              <span className="block h-full" style={{ width: `${progress.percent}%`, background: "var(--pill-active)" }} />
                             </span>
-                            <span className="text-[11.5px] whitespace-nowrap" style={{ color: "var(--muted)" }}>{done}/{total}</span>
+                            <span className="text-[11.5px] whitespace-nowrap" title={countTitle} aria-label={countTitle}
+                              style={{ color: progress.complete ? "var(--accent)" : "var(--muted)" }}>
+                              {countLabel}
+                              {(progress.optionalTotal > 0) && (
+                                <span style={{ color: "var(--muted3)" }}>
+                                  {onlyOptional ? " optional" : ` +${progress.optionalTotal} optional`}
+                                </span>
+                              )}
+                            </span>
                           </span>
                           <DropdownMenu.Root>
                             <DropdownMenu.Trigger asChild>
@@ -6073,16 +6158,39 @@ export default function HomePage() {
                           <div style={{ padding: "2px 15px 6px", borderTop: "1px solid var(--line2)" }}>
                             <div className="flex flex-col">
                               {shown.map((step) => (
-                                <div key={step.id} className="hovrow group/step flex items-center gap-2.5 rounded-[8px]" style={{ padding: "8px", margin: "0 -8px" }}>
-                                  <span className={cn("qcheck", step.done && "checked")}
+                                <div key={step.id} className="hovrow group/step flex items-start gap-2.5 rounded-[8px]" style={{ padding: "8px", margin: "0 -8px" }}>
+                                  <span className={cn("qcheck", step.done && "checked", step.optional && "optional")}
+                                    style={{ marginTop: 3 }}
+                                    role="checkbox" aria-checked={step.done}
+                                    aria-label={`${step.text}${step.optional ? " (optional)" : ""}`}
                                     onClick={() => handleToggleChecklistStep(editingTask._id, checklist, step.id)} />
-                                  <span className="flex-1 text-[13.5px]"
-                                    style={{ color: step.done ? "var(--strike)" : "var(--ink2)", textDecoration: step.done ? "line-through" : undefined }}>
-                                    {step.text}
-                                  </span>
+                                  <div className="flex-1 min-w-0">
+                                    <span className="text-[13.5px]"
+                                      style={{ color: step.done ? "var(--strike)" : "var(--ink2)", textDecoration: step.done ? "line-through" : undefined }}>
+                                      {step.text}
+                                    </span>
+                                    {step.optional && (
+                                      <span className="ml-2 align-middle text-[10px] font-semibold uppercase tracking-[0.08em] rounded-full whitespace-nowrap"
+                                        style={{ padding: "1px 7px", border: "1px dashed var(--check-bd)", color: "var(--muted)" }}>
+                                        Optional
+                                      </span>
+                                    )}
+                                    {step.note?.trim() && (
+                                      <div className="text-[12px] mt-0.5 whitespace-pre-wrap break-words" style={{ color: "var(--muted)" }}>
+                                        <LinkifiedText text={step.note} linkStyle={{ color: "var(--accent)" }} />
+                                      </div>
+                                    )}
+                                  </div>
+                                  <button onClick={() => void handleToggleStepOptional(editingTask._id, checklist.id, step.id)}
+                                    className="shrink-0 p-0.5 rounded opacity-0 group-hover/step:opacity-100 focus-visible:opacity-100 transition-opacity"
+                                    style={{ color: "var(--muted2)" }}
+                                    title={step.optional ? "Make required" : "Make optional (won't block the task)"}
+                                    aria-label={step.optional ? `Make "${step.text}" required` : `Make "${step.text}" optional`}>
+                                    {step.optional ? <CircleDot className="w-[13px] h-[13px]" /> : <CircleDashed className="w-[13px] h-[13px]" />}
+                                  </button>
                                   <button onClick={() => void handleRemoveChecklistStep(editingTask._id, checklist.id, step.id)}
-                                    className="shrink-0 p-0.5 rounded opacity-0 group-hover/step:opacity-100 transition-opacity"
-                                    style={{ color: "var(--muted2)" }} title="Remove step">
+                                    className="shrink-0 p-0.5 rounded opacity-0 group-hover/step:opacity-100 focus-visible:opacity-100 transition-opacity"
+                                    style={{ color: "var(--muted2)" }} title="Remove step" aria-label={`Remove "${step.text}"`}>
                                     <Trash2 className="w-[13px] h-[13px]" />
                                   </button>
                                 </div>
@@ -6211,7 +6319,7 @@ export default function HomePage() {
                                   ) : template.name}
                                 </span>
                                 <span className="text-[11.5px] shrink-0" style={{ color: "var(--muted)" }}>
-                                  {template.stepCount} step{template.stepCount === 1 ? "" : "s"} · used {template.usageCount}×
+                                  {templateStepSummary(template)} · used {template.usageCount}×
                                 </span>
                               </button>
                             );
